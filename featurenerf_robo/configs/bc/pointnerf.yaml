@@ -1,0 +1,26 @@
+embedding_name: pointnerf
+featurenerf_ckpt: ckpts/robo_dino_r18_all/pixel_nerf_latest
+embedding_ckpt: none
+
+pixelnerf_mode: global
+# pixelnerf_mode: spatial
+
+domain_randomization: False
+
+
+lr: 1e-3
+
+# num_trajs: 50
+num_trajs: 100
+
+
+log_dir: ???
+
+image_size: 128
+
+
+batch_size: 32
+
+use_reward_predictor: False
+
+freeze_encoder: False

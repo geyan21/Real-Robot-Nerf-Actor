@@ -1,0 +1,81 @@
+log_dir_root: logs/rl
+
+# default wandb
+wandb_entity: zeyanjie
+wandb_project: rl
+
+# default env
+domain_name: robot
+task_name: ???
+episode_length: 50
+eval_freq: 10k
+train_steps: 100k
+seed: 0
+
+# agent
+algorithm: sacv2_3d
+hidden_dim: 1024
+resume: none
+resume_rl: none
+mean_zero: False
+predict_state: 0
+hidden_dim_state: 128
+augmentation: colorjitter
+random_shift_pad: 4
+camera_mode: static+dynamic
+camera_move_range: 75
+
+# training
+image_size: 128
+discount: 0.99
+init_steps: 1000
+batch_size: 128
+finetune: 1 # fine tune 3d encoder (or something else)
+lr: 1e-3
+update_freq: 2
+tau: 0.01
+imagenet_normalization: False
+use_gt_camera: False
+log_train_video: 10k
+train_3d: False
+eval_episodes: 20
+
+# replay buffer
+buffer_capacity: -1
+use_prioritized_buffer: 0
+prioritized_replay_alpha: 0.6
+prioritized_replay_beta: 0.4
+ensemble_size: 1
+
+# actor
+actor_lr: 1e-3
+actor_beta: 0.9
+actor_log_std_min: -10
+actor_log_std_max: 2
+actor_update_freq: 2
+
+# critic
+critic_lr: 1e-3
+critic_beta: 0.9
+critic_tau: 0.01
+critic_target_update_freq: 2
+
+# architecture
+num_shared_layers: 11
+num_head_layers: 3
+num_filters: 32
+projection_dim: 50
+encoder_tau: 0.05
+
+# entropy maximization
+init_temperature: 0.1
+alpha_lr: 1e-4
+alpha_beta: 0.5
+
+# dmc
+modality: pixels # [pixels, states]
+
+
+
+
+

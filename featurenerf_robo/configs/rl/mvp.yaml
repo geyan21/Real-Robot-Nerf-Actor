@@ -1,0 +1,8 @@
+algorithm: sacv2
+embedding_name: mvp
+embedding_ckpt: none
+
+log_dir: ???
+
+save_model: False
+

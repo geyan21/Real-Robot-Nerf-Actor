@@ -1,0 +1,7 @@
+algorithm: sacv2
+embedding_name: none
+log_dir: ???
+
+save_model: False
+save_video: False
+

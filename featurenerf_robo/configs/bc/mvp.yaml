@@ -1,0 +1,23 @@
+embedding_name: mvp
+embedding_ckpt: none
+
+# eval with domain randomization
+domain_randomization: False
+
+
+lr: 1e-3
+
+# num_trajs: 50
+num_trajs: 100
+
+
+log_dir: ???
+
+image_size: 128
+
+
+batch_size: 32
+
+use_reward_predictor: False
+
+freeze_encoder: True

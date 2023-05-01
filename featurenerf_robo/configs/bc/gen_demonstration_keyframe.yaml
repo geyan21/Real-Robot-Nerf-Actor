@@ -1,0 +1,15 @@
+
+# env
+domain_name: robot
+camera_move_range: 75
+episode_length: 50
+image_size: 128
+task_name: ???
+
+# data
+num_trajs: 50
+
+# agent
+algorithm: sacv2
+observation_type: state
+resume_rl: ???

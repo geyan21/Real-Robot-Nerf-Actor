@@ -1,0 +1,92 @@
+dataset_root: expert_demonstrations_keyframe
+num_trajs: 10
+lr: 1e-3
+num_epochs: 100
+num_iterations: 10000
+batch_size: 32
+data_augmentation: True
+
+num_static_cameras: 1
+num_dynamic_cameras: 1
+camera_mode: static+dynamic
+camera_move_range: 75
+
+log_dir_root: logs/bc
+
+# wandb
+wandb_project: bc
+
+# training
+use_reward_predictor: False
+freeze_encoder: True
+featurenerf_ckpt: none 
+use_robot_state: True
+
+# only used for pixelnerf representation
+pixelnerf_mode: global
+
+ray_batch_size: 128
+
+pixelnerf_model:
+  regress_coord: True
+  type: pixelnerfembed
+  # d_embed: 64
+  d_embed: 384
+  share_mlp: True
+
+  distill_active: False
+  normalize_z: True
+  use_encoder: True
+  use_global_encoder: False
+  use_xyz: True
+  canon_xyz: False
+  use_code: True
+
+  code:
+    num_freqs: 6
+    freq_factor: 1.5
+    include_input: True
+  use_viewdirs: True
+  use_code_viewdirs: False
+  mlp_coarse:
+    type: resnet
+    n_blocks: 5
+    d_hidden: 512
+    combine_layer: 3
+    combine_type: average
+    beta: 0.0
+    use_spade: False
+  mlp_fine:
+    type: resnet
+    n_blocks: 5
+    d_hidden: 512
+    combine_layer: 3
+    combine_type: average
+    beta: 0.0
+    use_spade: False
+  encoder:  
+    type: spatial
+    # backbone: resnet34
+    # backbone: resnet50
+    backbone: resnet18
+    pretrained: True
+    num_layers: 4
+    # num_layers: 5
+    index_interp: bilinear
+    index_padding: border
+    upsample_interp: bilinear
+    feature_scale: 1.0
+    use_first_pool: True
+    latent_size: 128
+
+
+pixelnerf_renderer:
+  n_coarse: 64
+  n_fine: 32
+  n_fine_depth: 16
+  depth_std: 0.01
+  noise_std: 0.0
+  sched: []
+  white_bkgd: False
+  eval_batch_size: 100000
+  

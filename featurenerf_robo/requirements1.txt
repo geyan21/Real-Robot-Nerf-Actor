@@ -1,0 +1,14 @@
+pretrainedmodels
+pyhocon
+imageio
+opencv-python
+imageio-ffmpeg
+tensorboard
+dotmap
+numpy
+scipy
+scikit-image
+ipdb
+matplotlib
+tqdm
+lpips

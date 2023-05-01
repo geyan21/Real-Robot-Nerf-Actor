@@ -1,0 +1,5 @@
+image_size: 128
+log_dir: nerf_data
+
+observation_type: state+image
+eval_mode: train

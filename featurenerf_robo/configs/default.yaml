@@ -1,0 +1,49 @@
+# specific config to use
+alg_config: ???
+
+# environment
+domain_name: robot # [robot, metaworld]
+task_name: ??? # [reach, pegbox, push, lift, ...]
+observation_type: image # [state, image, state+image]
+frame_stack: 1
+episode_length: 50
+n_substeps: 20
+eval_mode: test
+action_space: xyzw # [xy, xyz, xyzw]
+cameras: 0
+render: False
+domain_randomization: 0
+
+# training
+num_epochs: 200
+num_iterations: 10000
+lr: 1e-3
+
+# camera of environment
+camera_mode: static+dynamic # ["static", "dynamic", "static+dynamic"]
+num_static_cameras: 1
+num_dynamic_cameras: 1
+
+# eval
+eval_freq: 1000
+eval_episodes: 10
+
+# misc
+log_dir_root: logs
+seed: 0
+save_video: False
+num_seeds: 1
+save_model: False
+
+# wandb
+use_wandb: False
+wandb_project: none
+wandb_group: none
+wandb_entity: zeyanjie
+
+# distill
+distill_active: False
+
+# nerf
+scene_batch_size: 1
+

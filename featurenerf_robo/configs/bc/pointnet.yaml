@@ -1,0 +1,24 @@
+embedding_name: pointnet
+pointnet_ckpt: none
+embedding_ckpt: none
+
+
+domain_randomization: False
+
+num_points: 512
+
+lr: 1e-3
+
+# num_trajs: 50
+num_trajs: 10
+
+
+log_dir: ???
+
+image_size: 128
+
+
+batch_size: 32
+
+
+freeze_encoder: False
