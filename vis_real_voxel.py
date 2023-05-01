@@ -9,6 +9,7 @@ import transforms3d
 import utils
 from utils import visualise_voxel
 from voxel_grid_real import VoxelGrid
+import pdb
 
 
 def perturb_se3(pcd,
@@ -332,8 +333,8 @@ def euler_to_quaternion(r):
     qw = np.cos(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
     return [qx, qy, qz, qw]
 
-position_dir = '/data2/yuyingge/real_kitchen/kitchen_2_25_oven'
-n_demo =  10
+position_dir = '/data/geyan21/projects/real-robot-nerf-actor/data/4_8_2_kitchens/Demos/kitchen1/faucet'
+n_demo =  5
 n_key = 4
 pose_all = []
 for demo in range(n_demo):
@@ -377,7 +378,7 @@ cam2base = cam2base @ gl2cv_homo
 
 for demo in range(n_demo):
   for i in range(n_key):
-    cloud = o3d.io.read_point_cloud("/data2/yuyingge/real_kitchen/kitchen_2_25_cabinet/real" + str(demo) + "/pcd" + str(i) + ".ply")
+    cloud = o3d.io.read_point_cloud("/data/geyan21/projects/real-robot-nerf-actor/data/4_8_2_kitchens/Demos/kitchen1/faucet/real" + str(demo) + "/pcd" + str(i) + ".ply")
     rgb = np.asarray(cloud.colors)
     pointcloud = np.asarray(cloud.points)
     print(rgb.shape, pointcloud.shape)
@@ -435,14 +436,17 @@ for demo in range(n_demo):
 
     vis_gt_coord = np.array(vis_gt_coord).astype(np.int32).reshape(1, -1)
     rotation_amount = -90
+    pdb.set_trace()
     rendered_img = visualise_voxel(vis_voxel_grid[0],
                                    None,
                                    None,
                                    vis_gt_coord[0],
                                    voxel_size=0.045,
                                    rotation_amount=np.deg2rad(rotation_amount))
+    pdb.set_trace()
 
     fig = plt.figure(figsize=(15, 15))
     plt.imshow(rendered_img)
     plt.axis('off')
-    plt.savefig('/data2/yuyingge/peract/real_kitchen/2_25_ar_real_oven_gt_new_' + str(demo) + '_' + str(i) + '.jpg')
+    plt.savefig('/data/geyan21/projects/real-robot-nerf-actor/voxel_' + str(demo) + '_' + str(i) + '.jpg')
+   

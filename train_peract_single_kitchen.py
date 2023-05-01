@@ -17,7 +17,7 @@ from torch import nn, einsum
 from einops import rearrange, repeat, reduce
 from einops.layers.torch import Reduce
 from network_utils import DenseBlock, SpatialSoftmax3D, Conv3DBlock, ConvTranspose3DBlock, Conv3DUpsampleBlock
-
+import pdb
 
 def point_to_voxel_index(
         point: np.ndarray,
@@ -267,7 +267,6 @@ def apply_se3_augmentation(pcd,
         trans_range = (bounds[:, 3:] - bounds[:, :3]) * trans_aug_range.to(device=device)
 
         trans_shift = trans_range * rand_dist((2, 3)).to(device=device)
-        #print(trans_shift)
         trans_shift[1] = trans_shift[0]
         #trans_shift = torch.tile(trans_shift, (bs,1))
         #print(trans_shift.shape, trans_shift)
@@ -374,6 +373,7 @@ def _clip_encode_text(clip_model, text):
     return x, emb
 
 def get_rgb_pcd(pcd_path, cam2base, device):
+    #pdb.set_trace()
     cloud = o3d.io.read_point_cloud(pcd_path)
     rgb = np.asarray(cloud.colors)
     pointcloud = np.asarray(cloud.points)
@@ -404,7 +404,7 @@ class PerceiverIO(nn.Module):
             num_grip_classes=2,  # open or not open
             num_collision_classes=2,  # collisions allowed or not allowed
             input_axis=3,  # 3D tensors have 3 axes
-            num_latents=2048,  # number of latent vectors
+            num_latents=512,  # number of latent vectors
             im_channels=64,  # intermediate channel size
             latent_dim=512,  # dimensions of latent vectors
             cross_heads=1,  # number of cross-attention heads
@@ -730,85 +730,68 @@ def save_checkpoint(model, save_path):
         os.makedirs(os.path.dirname(save_path))
     torch.save(model.state_dict(), save_path)
 
-import wandb
-USE_WANDB = True
-PROJECT_NAME = "real-robot-peract"
-model_name = "peract for kitchen 1" # peract for kitchen 1 , peract for 2 kitchens
-if USE_WANDB:
-    wandb.init(
-            project=PROJECT_NAME, name=model_name, config={"model_for_real": "two_kitchens"},
-            # config_exclude_keys=['model_name', 'save_every', 'log_every'],
-        )
-    wandb.run.log_code(".")  # Need to first enable it on wandb web UI.
 
-pose_all = []
-base_dir = '/data/geyan21/projects/real-robot-nerf-actor/data/4_8_2_kitchens/Demos'
+position_dir = '/data/geyan21/projects/real-robot-nerf-actor/data/kitchen1_box_generalize/Peract_kitchen_generalize/grasp'
 model_dir = '/data/geyan21/projects/real-robot-nerf-actor/models'
-kitchens = ['kitchen1', 'kitchen2']
-tasks = ['faucet', 'oven','teapot']
-n_kitchen = 1
-n_task = 3
 n_demo =  5
-n_key = 4 # don't count first key
-
-
-
-for kitchen_id in range(n_kitchen):
-    for task_id in range(n_task):
-        for demo in range(n_demo):
-            position_path = os.path.join(base_dir, kitchens[kitchen_id], tasks[task_id], str(demo)+'_xarm_position.txt')
-            print(position_path)
-            f = open(position_path)
-            lines = f.readlines()
-            for line in lines:
-                line = line.strip().replace('[','').replace(']','')
-                line = line.split(',')
-                for value in line:
-                    try:
-                        pose_all.append(float(value))
-                    except:
-                        if 'True' in value:
-                            pose_all.append(1.0)
-                        else:
-                            pose_all.append(0.0)
-pose_all = np.array(pose_all).reshape(n_kitchen, n_task, n_demo, n_key+1, -1)
-xyz_all = pose_all[:, :, :, :, :3] * 0.001
-rotation_all = pose_all[:, :, :, :, 3:6]
-gripper_open_all = pose_all[:, :, :, :, -1]
+n_key = 4 # do not count the initial frame 
+pose_all = []
+for demo in range(n_demo):
+    position_path = os.path.join(position_dir, str(demo)+'_xarm_position.txt')
+    f = open(position_path)
+    lines = f.readlines()
+    for line in lines:
+        line = line.strip().replace('[','').replace(']','')
+        line = line.split(',')
+        for value in line:
+            try:
+                pose_all.append(float(value))
+            except:
+                if 'True' in value:
+                    pose_all.append(1.0)
+                else:
+                    pose_all.append(0.0)
+pose_all = np.array(pose_all).reshape(n_demo, n_key+1, -1)
+xyz_all = pose_all[:, :, :3] * 0.001
+rotation_all = pose_all[:,:,3:6]
+gripper_open_all = pose_all[:,:,-1]
 print(xyz_all.shape, rotation_all.shape, gripper_open_all.shape)
 
 
-#bounds = torch.Tensor([-0.1, -0.1, -0.2, 0.8, 0.8, 0.8])
-bounds = torch.Tensor([-0.1, -0.3, -0.2, 0.8, 0.7, 0.7])
+bounds = torch.Tensor([-0.1, -0.3, -0.2, 0.8, 0.7, 0.7]) # set manually, later try to visualize the voxels in this computer to check the bounds
 vox_size = 100
 rotation_resolution = 5
 max_num_coords=220000
 bs = 1
 _num_rotation_classes = 72
 
-desk2camera = [[0.9992296353045714, 0.03351173805892007, -0.020423010095561807, -0.30459545551541667], [0.016111903829177272, 0.12421545808372213, 0.9921244511290155, 0.22325071524867773], [0.03578466828255411, -0.9916892070529564, 0.12357982897943404, 0.7236517078874926], [0.0, 0.0, 0.0, 1.0]]
-# RECALIBRATE
+
+# change the following desk2camera, adjust_ori_mat, and adjust_pos_mat each time we do the calibration
+# change the following desk2camera, adjust_ori_mat, and adjust_pos_mat each time we do the calibration
+desk2camera = [[0.9990809680298979, -0.04226655945655472, 0.007124413810835721, -0.21317943800854028], [-0.004920145095573605, 0.052028245371015504, 0.9986334932575875, 0.24697715742900836], [-0.04257947266795357, -0.997750770300539, 0.05177247214495428, 0.7521121095357662], [0.0, 0.0, 0.0, 1.0]]
 adjust_ori_mat = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
-adjust_pos_mat = np.array([[1, 0, 0, -0.06], [0, 1, 0, 0.12], [0, 0, 1, -0.005], [0, 0, 0, 1]]) # manually adjust
+adjust_pos_mat = np.array([[1, 0, 0, -0.08], [0, 1, 0, 0.16], [0, 0, 1, 0.01], [0, 0, 0, 1]])
 
 base2camera = desk2camera@adjust_ori_mat@adjust_pos_mat
 cam2base = np.linalg.inv(base2camera).reshape(4, 4)
+print('cam2base:', cam2base)
 
 gl2cv = transforms3d.euler.euler2mat(np.pi, 0, 0)
 gl2cv_homo = np.eye(4)
 gl2cv_homo[:3, :3] = gl2cv
 cam2base = cam2base @ gl2cv_homo
 
-device = "cuda:1"
+device = "cuda:3"
+# define different language instructions for differnt tasks 
 #description = "open the cabinet door"
-description = ["Turn the faucet", "Open the top oven door", "Place the Tea Pot on the stove"]
-tokens = clip.tokenize(description).numpy()
+#description = "open the top oven door"
+# description = "turn the faucet"
+description = "Place the white box into the right tank"
+tokens = clip.tokenize([description]).numpy()
 token_tensor = torch.from_numpy(tokens).to(device)
 clip_model, preprocess = clip.load("RN50", device=device)
 lang_feats, lang_embs = _clip_encode_text(clip_model, token_tensor)
-lang_goal_embs_all = lang_embs.float().detach()
-print("lang_goal_embs_all shape:", lang_goal_embs_all.shape)
-#lang_goal_embs = lang_embs[0].float().detach().unsqueeze(0)
+lang_goal_embs = lang_embs[0].float().detach().unsqueeze(0)
 lang_goal = np.array([description], dtype=object)
 
 voxelizer = VoxelGrid(
@@ -832,7 +815,7 @@ perceiver_encoder = PerceiverIO(
     num_rotation_classes=72,
     num_grip_classes=2,
     num_collision_classes=2,
-    num_latents=2048,
+    num_latents=2048, #2048 in server
     latent_dim=512,
     cross_heads=1,
     latent_heads=8,
@@ -849,9 +832,9 @@ perceiver_encoder = PerceiverIO(
 )
 qnet = copy.deepcopy(perceiver_encoder).to(device)
 
-# load pretrained model
-checkpoint = torch.load('/data/geyan21/projects/real-robot-nerf-actor/models/kitchen_1_3_tasks/ckpt_5demo_multi_aug_2048_4_8_4key_150000.pth')
-qnet.load_state_dict(checkpoint)
+# checkpoint = torch.load('/data/geyan21/projects/peract_for_real/real_ckpt_faucet/ckpt_5demo_ar_prev_aug_3_4_faucet_4key40000.pth')
+# qnet.load_state_dict(checkpoint)
+
 
 optimizer = torch.optim.Adam(qnet.parameters(), lr=0.0001, weight_decay=0.000001)
 _cross_entropy_loss = nn.CrossEntropyLoss(reduction='none')
@@ -859,20 +842,16 @@ total_loss = 0.
 backprop = True
 _transform_augmentation = True
 #_transform_augmentation_xyz = torch.Tensor([0.125, 0.125, 0.125])
-#_transform_augmentation_xyz = torch.Tensor([0.1, 0.05, 0.05])
-#_transform_augmentation_xyz = torch.Tensor([0.1, 0.1, 0.1])
-# _transform_augmentation_xyz = torch.Tensor([0.2, 0.05, 0.05])
-_transform_augmentation_xyz = torch.Tensor([0.1, 0.05, 0.1])
-#_transform_augmentation_xyz = torch.Tensor([0.125, 0, 0])
+#_transform_augmentation_xyz = torch.Tensor([0.05, 0.05, 0.1])
+_transform_augmentation_xyz = torch.Tensor([0.125, 0.05, 0.05]) # set the range manually
 
-for iter in range(150010):
-    kitchen_id = random.randint(0, n_kitchen-1)
-    task_id = random.randint(0, n_task-1)
-    demo = random.randint(0, n_demo-1)
+for iter in range(100000):
+    demo = random.randint(0, n_demo-1)  # here we minus 1 because the range of random.randint(a,b) is [a,b] not [a, b)
     i = random.randint(0, n_key-1)
-    j = 1
+    j = 1 # the next keyframe action
 
-    trans_indicies, rot_and_grip_indicies, ignore_collisions = get_action(xyz_all[kitchen_id][task_id][demo][i+j], rotation_all[kitchen_id][task_id][demo][i+j], gripper_open_all[kitchen_id][task_id][demo][i+j], 1, bounds, vox_size, rotation_resolution)
+    # the next keyframe groundtruth action
+    trans_indicies, rot_and_grip_indicies, ignore_collisions = get_action(xyz_all[demo][i+j], rotation_all[demo][i+j], gripper_open_all[demo][i+j], 1, bounds, vox_size, rotation_resolution)
     trans_indicies = torch.Tensor(trans_indicies).to(device).unsqueeze(0)
     rot_and_grip_indicies  = torch.Tensor(rot_and_grip_indicies).to(device).unsqueeze(0)
     ignore_collisions = torch.Tensor(ignore_collisions).to(device).unsqueeze(0)
@@ -881,18 +860,17 @@ for iter in range(150010):
     action_trans = trans_indicies.int()
     action_rot_grip = rot_and_grip_indicies.int()
     action_ignore_collisions = ignore_collisions.int()
-
-    pcd_path = os.path.join(base_dir,kitchens[kitchen_id], tasks[task_id], 'real' + str(demo), 'pcd' + str(i) + '.ply')
-    lang_goal_embs = lang_goal_embs_all[task_id].unsqueeze(0)
-
+    
+    # the current pointcloud observation
+    pcd_path = os.path.join(position_dir, 'real' + str(demo), 'pcd' + str(i) + '.ply')
     pointcloud_robot, rgb = get_rgb_pcd(pcd_path, cam2base, device)
 
 
-
-    trans_indicies_prev, rot_and_grip_indicies_prev, _ = get_action(xyz_all[kitchen_id][task_id][demo][i], rotation_all[kitchen_id][task_id][demo][i],
-                                                                            gripper_open_all[kitchen_id][task_id][demo][i], 1, bounds,
+    # the current robot's state
+    trans_indicies_prev, rot_and_grip_indicies_prev, _ = get_action(xyz_all[demo][i], rotation_all[demo][i],
+                                                                            gripper_open_all[demo][i], 1, bounds,
                                                                             vox_size, rotation_resolution)
-    xyz_prev = torch.Tensor(xyz_all[kitchen_id][task_id][demo][i]).unsqueeze(0)
+    xyz_prev = torch.Tensor(xyz_all[demo][i]).unsqueeze(0)
 
     
     trans_indicies_prev = torch.Tensor(trans_indicies_prev).to(device).unsqueeze(0)
@@ -903,9 +881,10 @@ for iter in range(150010):
 
 
     if _transform_augmentation:
+        # when we do augmentation, we need to use the same parameters for both the current and the next actions 
+        #print('transform_augmentation')
         action_trans_cat = torch.cat([action_trans_prev, action_trans], 0)
-        #print(demo, i, 'before', action_trans_prev, action_trans )
-        xyz_cat = torch.cat([xyz_prev, torch.Tensor(xyz_all[kitchen_id][task_id][demo][i+j]).unsqueeze(0)], 0)
+        xyz_cat = torch.cat([xyz_prev, torch.Tensor(xyz_all[demo][i+j]).unsqueeze(0)], 0)
         pointcloud_robot_cat = torch.cat([pointcloud_robot, pointcloud_robot], 0)
         bounds_cat = torch.cat([bounds.unsqueeze(0), bounds.unsqueeze(0)], 0)
 
@@ -923,11 +902,12 @@ for iter in range(150010):
         pointcloud_robot = pointcloud_robot_cat[0][:1]
         action_trans = action_trans_cat[1:]
         action_trans_prev = action_trans_cat[:1]
-        #print(demo, i, 'after', action_trans_prev, action_trans)
+        #print(demo, i, action_trans_prev, action_trans)
 
     proprio = torch.cat([action_trans_prev, action_rot_grip_prev], 1).to(device).float()
     #print(proprio.shape, proprio)
 
+    #pdb.set_trace()
     voxel_grid = voxelizer.coords_to_bounding_voxel_grid(
         pointcloud_robot, coord_features=rgb, coord_bounds=bounds)
     #print("voxel_grid:", voxel_grid.shape)
@@ -978,13 +958,8 @@ for iter in range(150010):
         optimizer.step()
 
         total_loss = total_loss.item()
-        if (iter + 1) % 50 == 0:
-            log_dict = {
-                        'n_iter': iter,
-                        'loss_pred': total_loss,
-                    }
-            wandb.log(log_dict)
-            print(iter, kitchen_id, task_id, demo, i, total_loss)
+        if (iter + 1) % 20 == 0:
+            print(iter, demo, i, total_loss)
 
     # choose best action through argmax
     # coords_indicies, rot_and_grip_indicies, ignore_collision_indicies = choose_highest_action(q_trans,
@@ -997,6 +972,6 @@ for iter in range(150010):
     # continuous_trans = bounds_new[:, :3] + res * coords_indicies.int() + res / 2
 
     if (iter+1) % 10000 == 0:
-       save_checkpoint(qnet, model_dir + '/kitchen_1_3_tasks/ckpt_5demo_multi_aug_2048_4_8_4key_' + str(iter+1+150000) + '.pth')
+     save_checkpoint(qnet, model_dir + 'kitchen1_box_generalize/ckpt_5demo_4_keys_box' + str(iter+1) + '.pth')
 
     #print(i, continuous_trans)
