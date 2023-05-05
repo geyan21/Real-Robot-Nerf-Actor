@@ -81,11 +81,22 @@ def save_single_channel_img(img,name):
 conf_path = "/data/geyan21/projects/real-robot-nerf-actor/featurenerf_robo/featurenerf/conf/exp/robo_dino_real.conf"
 conf = ConfigFactory.parse_file(conf_path)
 
-device = "cuda:1"
-test_image = "/data/geyan21/projects/real-robot-nerf-actor/data/Nerf_kitchen2/Oven/real0/rgb3.png"
-model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_kitchen1_5_1_refine_refine/pixel_nerf_latest"
-nerf_npz = '/data/geyan21/projects/featurenerf-robo/Data/Nerf_kitchen1_refine_refine/img/Nerfreal_5_0.npz'
+device = "cuda:3"
+id = 0
+test_image = f"/data/geyan21/projects/real-robot-nerf-actor/data/Nerfact_kitchen/oven/real0/rgb{id}.png"
+model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV/pixel_nerf_latest_00040000"
+nerf_npz = f'/data/geyan21/projects/featurenerf-robo/Data/Nerf_ContrastMV_new/Multi_step_img/Nerfreal_8_{id}.npz'
+# model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_sep_14imgs/pixel_nerf_latest_00008000"
+# nerf_npz = f'/data/geyan21/projects/featurenerf-robo/Data/Nerf_ContrastMV/Multi_step_img/Nerfreal_8_{id}.npz'
+net = make_model(conf["model"]).to(device=device)
+# pdb.set_trace()
+net.load_weights(model_path=model_path,device=device)
 
+renderer = NeRFEmbedRenderer.from_conf(
+    conf["renderer"], eval_batch_size=50000,
+).to(device=device)
+render_par = renderer.bind_parallel(net).eval()
+renderer.eval()
 # model_path = '/data/geyan21/projects/real-robot-nerf-actor/nerfmodel/rl03/pixel_nerf_latest'
 # nerf_npz = '/data/geyan21/projects/real-robot-nerf-actor/nerfmodel/rl03/Nerfreal_5_0.npz'
 def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
@@ -98,7 +109,8 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
 
     # load one image and resize to 128x128 if needed
     img = Image.open(test_image)
-    img = img.resize((128, 128))
+    # img = img.resize((128, 128))
+    img = img.resize((80, 60))
     img = np.array(img) / 255.0
     # pdb.set_trace()
     # normalize to -1, 1
@@ -115,21 +127,10 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
     focal = torch.from_numpy(nerf_data['focal']).float().to(device=device)
 
 
-    net = make_model(conf["model"]).to(device=device)
-    # pdb.set_trace()
-    net.load_weights(model_path=model_path,device=device)
-
-    renderer = NeRFEmbedRenderer.from_conf(
-        conf["renderer"], eval_batch_size=50000,
-    ).to(device=device)
-
-    # pdb.set_trace()
-
-
-    render_par = renderer.bind_parallel(net).eval()
-    renderer.eval()
-
-    vis = visdom.Visdom()
+    
+    use_visdom = True
+    if use_visdom:
+        vis = visdom.Visdom()
 
     z_near = 1.2
     z_far = 4.0
@@ -183,7 +184,7 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
         )
         test_rays = test_rays.reshape(1, H * W, -1)
         # pdb.set_trace()
-        chunk_size = 4096
+        chunk_size = 4096  #4096
         pnts = []
         rgbs = []
         sigmas = []
@@ -202,6 +203,11 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
             rgb_fine_np = fine.rgb[0].cpu().numpy().reshape(H, W, 3)
             embed_fine_np = fine.embed[0].cpu().numpy().reshape(H, W, -1).mean(-1) #H, W
             # pdb.set_trace()
+
+            # free memory
+            del render_dict
+            del coarse
+            del fine
             
             depth_fine_cmap = util.cmap(depth_fine_np) 
             alpha_fine_cmap = util.cmap(alpha_fine_np) 
@@ -214,27 +220,29 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
             # save as image using Image
             if not os.path.exists(".visualize_recon/"):
                 os.makedirs(".visualize_recon/")
-            Image.fromarray(depth_fine_cmap).save(".visualize_recon/depth_fine_cmap.png")
-            Image.fromarray(alpha_fine_cmap).save(".visualize_recon/alpha_fine_cmap.png")
-            rgb_fine_np.save(".visualize_recon/rgb_fine_np.png")
-            embed_fine_cmap.save(".visualize_recon/embed_fine_cmap.png")
+            Image.fromarray(depth_fine_cmap).save(f".visualize_recon/depth_fine_cmap_step{id}.png")
+            Image.fromarray(alpha_fine_cmap).save(f".visualize_recon/alpha_fine_cmap_step{id}.png")
+            rgb_fine_np.save(f".visualize_recon/rgb_fine_np_step{id}.png")
+            embed_fine_cmap.save(f".visualize_recon/embed_fine_cmap_step{id}.png")
 
             # pdb.set_trace()
 
+        with torch.no_grad():
+            for i in range(0, test_rays.shape[1], chunk_size):
+                # pdb.set_trace()
+                ret_last_feat = True
+                chunk = test_rays[:, i : i + chunk_size]
+                pnts_, rgbs_, sigmas_, embeds_ = render_par(chunk, want_weights=True, extract_radience=True, ret_last_feat=ret_last_feat)
+                # reshape embeds
+                if ret_last_feat:
+                    embeds_ = embeds_.reshape(1, -1, embeds_.shape[-1])  # 512 if ret_last_feat else 384+3
+                pnts.append(pnts_)
+                rgbs.append(rgbs_)
+                sigmas.append(sigmas_)
+                embeds.append(embeds_)
+                # free memory that is not used
+                del pnts_, rgbs_, sigmas_, embeds_
 
-        for i in range(0, test_rays.shape[1], chunk_size):
-            # pdb.set_trace()
-            ret_last_feat = True
-            chunk = test_rays[:, i : i + chunk_size]
-            pnts_, rgbs_, sigmas_, embeds_ = render_par(chunk, want_weights=True, extract_radience=True, ret_last_feat=ret_last_feat)
-            # reshape embeds
-            if ret_last_feat:
-                embeds_ = embeds_.reshape(1, -1, embeds_.shape[-1])  # 512 if ret_last_feat else 384+3
-            pnts.append(pnts_)
-            rgbs.append(rgbs_)
-            sigmas.append(sigmas_)
-            embeds.append(embeds_)
-            
         pnts = torch.cat(pnts, dim=1)
         rgbs = torch.cat(rgbs, dim=1)
         sigmas = torch.cat(sigmas, dim=1)
@@ -289,6 +297,8 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
         # mask2 = (pnts[...,2] > 0.6) & (pnts[...,2] < 1.6)
         mask = mask1 & mask2
 
+        # mask = sigmas > (sigmas.max()/8)
+
         # mask = mask1
 
         bounds = [-0.3, -0.5, 0.6, 0.7, 0.5, 1.6]   # mask by bounds
@@ -304,8 +314,9 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
         rgbs = rgbs[mask]
         embeds = embeds[mask]
         # convert to label
-        rgbs = rgbs.cpu().numpy()
-        rgbs = (rgbs * 255).astype(np.uint8)
+        rgbs = rgbs.cpu().numpy()  # 0-1
+        # pdb.set_trace()
+        rgbs_vis = (rgbs * 255).astype(np.uint8)
         # rgbs = rgbs.mean(axis=-1)
         # pdb.set_trace()
         # pnts = pnts[:200000,:]
@@ -314,20 +325,21 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
         pnts = pnts @ worldtobase[:3, :3].T + worldtobase[:3, 3]
 
         threhold = None
-        use_visdom = True
         if use_visdom:
             print("visualizing...")
             vis.scatter(X=pnts.cpu().numpy(), win='pnts', \
-                                        opts=dict(markersize=2, markercolor=rgbs, title=f'nerf_pnts_{threhold}'))
+                                        opts=dict(markersize=2, markercolor=rgbs_vis, title=f'nerf_pnts_step{id}'))
 
         # save as ply
-        save_ply = True
+        save_ply = False
         if save_ply:
             # pdb.set_trace()
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(pnts.cpu().numpy())
-            pcd.colors = o3d.utility.Vector3dVector(rgbs/255.0)
+            pcd.colors = o3d.utility.Vector3dVector(rgbs)
             o3d.io.write_point_cloud("nerf.ply", pcd)
+        
+        # free memory that is not used
         
         return pnts, rgbs, embeds
 

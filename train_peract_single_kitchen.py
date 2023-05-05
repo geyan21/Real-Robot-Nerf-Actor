@@ -972,6 +972,6 @@ for iter in range(100000):
     # continuous_trans = bounds_new[:, :3] + res * coords_indicies.int() + res / 2
 
     if (iter+1) % 10000 == 0:
-     save_checkpoint(qnet, model_dir + 'kitchen1_box_generalize/ckpt_5demo_4_keys_box' + str(iter+1) + '.pth')
+     save_checkpoint(qnet, model_dir + '/kitchen1_box_generalize/ckpt_5demo_4_keys_box' + str(iter+1) + '.pth')
 
     #print(i, continuous_trans)
