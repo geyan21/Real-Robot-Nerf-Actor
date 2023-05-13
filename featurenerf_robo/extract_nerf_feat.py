@@ -81,11 +81,15 @@ def save_single_channel_img(img,name):
 conf_path = "/data/geyan21/projects/real-robot-nerf-actor/featurenerf_robo/featurenerf/conf/exp/robo_dino_real.conf"
 conf = ConfigFactory.parse_file(conf_path)
 
-device = "cuda:3"
-id = 0
+device = "cuda:1"
+id = 3
+# test_image = "/data/geyan21/projects/real-robot-nerf-actor/data/kitchen1_box_generalize/Peract_kitchen_generalize/grasp_green/real0/rgb1.png"   
 test_image = f"/data/geyan21/projects/real-robot-nerf-actor/data/Nerfact_kitchen/oven/real0/rgb{id}.png"
-model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV/pixel_nerf_latest_00040000"
-nerf_npz = f'/data/geyan21/projects/featurenerf-robo/Data/Nerf_ContrastMV_new/Multi_step_img/Nerfreal_8_{id}.npz'
+# model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_14imgs_1024/pixel_nerf_latest_00274000"
+# model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_14imgs_MV_1024/pixel_nerf_latest_00036000"
+# model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_14imgs_MV_512/pixel_nerf_latest_00160000"
+model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_14imgs_MV_512/pixel_nerf_latest_00396000"
+nerf_npz = f'/data/geyan21/projects/featurenerf-robo/Data/Nerf_ContrastMV_14imgs/Multi_step_img/Nerfreal_8_{id}.npz'
 # model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_sep_14imgs/pixel_nerf_latest_00008000"
 # nerf_npz = f'/data/geyan21/projects/featurenerf-robo/Data/Nerf_ContrastMV/Multi_step_img/Nerfreal_8_{id}.npz'
 net = make_model(conf["model"]).to(device=device)
@@ -271,8 +275,8 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
         # write a loop to make sure the points after masked with mask1 are between 90000 and 150000
         step = 0.1
         num_current = 0
-        lower_bound = 60000
-        upper_bound = 90000
+        lower_bound = 50000
+        upper_bound = 70000
         while num_current < lower_bound or num_current > upper_bound:
             mask1 = sigmas > (sigmas.max()*step)
             num_current = (mask1&mask2).sum()
@@ -296,9 +300,9 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
         # remove black ground far in the back
         # mask2 = (pnts[...,2] > 0.6) & (pnts[...,2] < 1.6)
         mask = mask1 & mask2
-
-        # mask = sigmas > (sigmas.max()/8)
-
+       
+        # mask = (sigmas > (sigmas.max()/9)) & mask2
+        # mask = (sigmas > (sigmas.max()/8))
         # mask = mask1
 
         bounds = [-0.3, -0.5, 0.6, 0.7, 0.5, 1.6]   # mask by bounds
@@ -331,7 +335,7 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
                                         opts=dict(markersize=2, markercolor=rgbs_vis, title=f'nerf_pnts_step{id}'))
 
         # save as ply
-        save_ply = False
+        save_ply = True
         if save_ply:
             # pdb.set_trace()
             pcd = o3d.geometry.PointCloud()

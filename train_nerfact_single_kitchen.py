@@ -20,7 +20,7 @@ from network_utils import DenseBlock, SpatialSoftmax3D, Conv3DBlock, ConvTranspo
 import pdb
 import sys
 
-import sys
+import time
 import os
 
 sys.path.insert(
@@ -686,6 +686,8 @@ class PerceiverIO(nn.Module):
         dense0 = self.dense0(torch.cat(feats, dim=1))
         dense1 = self.dense1(dense0)  # [B,72*3+2+2]
 
+        del feats, dense0
+
         # format output
         rot_and_grip_collision_out = self.rot_grip_collision_ff(dense1)
         rot_and_grip_out = rot_and_grip_collision_out[:, :-self.num_collision_classes]
@@ -770,7 +772,7 @@ def save_checkpoint(model, save_path):
 
 def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
     img = Image.open(test_image)
-    img = img.resize((128, 128))
+    img = img.resize((80, 60))
     img = np.array(img) / 255.0
     # normalize to -1, 1
     img = img * 2.0 - 1.0
@@ -868,12 +870,12 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
             embed_fine_cmap = Image.fromarray(embed_fine_cmap)
 
             # save as image using Image
-            if not os.path.exists(".visualize_recon/"):
-                os.makedirs(".visualize_recon/")
-            Image.fromarray(depth_fine_cmap).save(".visualize_recon/depth_fine_cmap.png")
-            Image.fromarray(alpha_fine_cmap).save(".visualize_recon/alpha_fine_cmap.png")
-            rgb_fine_np.save(".visualize_recon/rgb_fine_np.png")
-            embed_fine_cmap.save(".visualize_recon/embed_fine_cmap.png")
+            if not os.path.exists(".visualize_recon_nerfact/"):
+                os.makedirs(".visualize_recon_nerfact/")
+            Image.fromarray(depth_fine_cmap).save(".visualize_recon_nerfact/depth_fine_cmap.png")
+            Image.fromarray(alpha_fine_cmap).save(".visualize_recon_nerfact/alpha_fine_cmap.png")
+            rgb_fine_np.save(".visualize_recon_nerfact/rgb_fine_np.png")
+            embed_fine_cmap.save(".visualize_recon_nerfact/embed_fine_cmap.png")
 
             # pdb.set_trace()
 
@@ -921,8 +923,8 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
         # write a loop to make sure the points after masked with mask1 are between 90000 and 150000
         step = 0.1
         num_current = 0
-        lower_bound = 60000
-        upper_bound = 90000
+        lower_bound = 50000
+        upper_bound = 70000
         while num_current < lower_bound or num_current > upper_bound:
             mask1 = sigmas > (sigmas.max()*step)
             num_current = (mask1&mask2).sum()
@@ -999,80 +1001,97 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
         return pnts, rgbs, embeds
 
 
+import wandb
+USE_WANDB = True
+PROJECT_NAME = "real-robot-peract"
+model_name = "nerfact_oven" # peract for kitchen 1 , peract for 2 kitchens
+if USE_WANDB:
+    wandb.init(
+            project=PROJECT_NAME, name=model_name, config={"model_for_real": "one_kitchen"},
+            # config_exclude_keys=['model_name', 'save_every', 'log_every'],
+        )
+    wandb.run.log_code(".")  # Need to first enable it on wandb web UI.
+
 # from extract_nerf_feat import extract_nerf_feat 
-device = "cuda:0"  
-conf_path = "/data/geyan21/projects/real-robot-nerf-actor/featurenerf_robo/featurenerf/conf/exp/robo_dino_real.conf"
-
-model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_kitchen1_5_1_refine_refine/pixel_nerf_latest"
-
-conf = ConfigFactory.parse_file(conf_path)
-net = make_model(conf["model"]).to(device=device)
-net = net.eval()
-# pdb.set_trace()
-net.load_weights(model_path=model_path,device=device)
-renderer = NeRFEmbedRenderer.from_conf(
-    conf["renderer"], eval_batch_size=50000,
-).to(device=device)
-render_par = renderer.bind_parallel(net).eval()
-renderer.eval()
-
-test_image = "/data/geyan21/projects/real-robot-nerf-actor/data/Nerf_kitchen2/Oven/real0/rgb3.png"
-model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_kitchen1_5_1_refine_refine/pixel_nerf_latest"
-nerf_npz = '/data/geyan21/projects/featurenerf-robo/Data/Nerf_kitchen1_refine_refine/img/Nerfreal_5_0.npz'
-# nerf_pnts, nerf_rgbs, nerf_feat = extract_nerf_feat(net, render_par, conf_path, device, model_path, test_image, nerf_npz)
-# pdb.set_trace()
-position_dir = '/data/geyan21/projects/real-robot-nerf-actor/data/Nerf_kitchen2/Oven'
-model_dir = '/data/geyan21/projects/real-robot-nerf-actor/models' # save checkpoint
-nerf_feat_dir = '/data/geyan21/projects/real-robot-nerf-actor/data/Nerf_kitchen2/nerf_feat' # save nerf_feat, nerf_pnts, nerf_rgbs in npz for each demo
-# check if the directory exists
-if not os.path.exists(nerf_feat_dir):
-    os.makedirs(nerf_feat_dir)
+device = "cuda:2"  
 n_demo =  5
 n_key = 4 # do not count the initial frame 
 nerf_feature_dim = 512
+extract_nerf_feature = False
+concat_nerf_rgb = True
+concat_nerf_ori = False
+nerf_only = False
+ori_only = False
+rgb_only = False
 
-# load test image
-nerf_pnts = []
-nerf_rgbs = []
-nerf_feat = []
-with torch.no_grad():
-    for demo in range(n_demo):
-        for key in range(n_key):
-            test_image = os.path.join(position_dir, 'real'+str(demo),f'rgb{key}.png')
-            nerf_pnt, nerf_rgb, nerf_ft = extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz)
-            # pdb.set_trace()
-            # convert to numpy
-            nerf_pnt = nerf_pnt.cpu().numpy()
-            nerf_rgb = nerf_rgb.cpu().numpy()
-            nerf_ft = nerf_ft.cpu().numpy()
-            # save nerf_feat, nerf_pnts, nerf_rgbs in npz for each demo in each key
-            np.savez(os.path.join(nerf_feat_dir, f'nerf_feat_{demo}_{key}.npz'), nerf_feat=nerf_ft, nerf_pnts=nerf_pnt, nerf_rgbs=nerf_rgb)
-            # free memory
-            del nerf_pnt, nerf_rgb, nerf_ft
+# test_image = "/data/geyan21/projects/real-robot-nerf-actor/data/Nerf_kitchen2/Oven/real0/rgb3.png"
+nerf_npz = '/data/geyan21/projects/featurenerf-robo/Data/Nerf_ContrastMV_14imgs/Multi_step_img/Nerfreal_8_0.npz'
+# nerf_pnts, nerf_rgbs, nerf_feat = extract_nerf_feat(net, render_par, conf_path, device, model_path, test_image, nerf_npz)
+# pdb.set_trace()
+position_dir = '/data/geyan21/projects/real-robot-nerf-actor/data/Nerfact_kitchen/oven'
+model_dir = '/data/geyan21/projects/real-robot-nerf-actor/models/Nerfact/' # save checkpoint
+nerf_feat_dir = '/data/geyan21/projects/real-robot-nerf-actor/data/Nerfact_kitchen/nerf_feat' # save nerf_feat, nerf_pnts, nerf_rgbs in npz for each demo
 
-            # empty the cache
-            torch.cuda.empty_cache()  # release cache, very important!!!
+if extract_nerf_feature:
+    conf_path = "/data/geyan21/projects/real-robot-nerf-actor/featurenerf_robo/featurenerf/conf/exp/robo_dino_real.conf"
+    model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_14imgs_MV_512/pixel_nerf_latest_00396000"
 
-        #     nerf_pnts.append(nerf_pnt)
-        #     nerf_rgbs.append(nerf_rgb)
-        #     nerf_feat.append(nerf_ft)
-        #     # free memory
-        #     del nerf_pnt, nerf_rgb, nerf_ft
-        # # save nerf_feat, nerf_pnts, nerf_rgbs in npz for each demo
-        # nerf_feat = np.array(nerf_feat).reshape(n_key, -1, nerf_feature_dim)
-        # nerf_pnts = np.array(nerf_pnts).reshape(n_key, -1, 3)
-        # nerf_rgbs = np.array(nerf_rgbs).reshape(n_key, -1, 3)
-        # np.savez(os.path.join(nerf_feat_dir, f'nerf_feat_{demo}.npz'), nerf_feat=nerf_feat, nerf_pnts=nerf_pnts, nerf_rgbs=nerf_rgbs)
-        # # free memory
-        # del nerf_pnts, nerf_rgbs, nerf_feat
-        
+    conf = ConfigFactory.parse_file(conf_path)
+    net = make_model(conf["model"]).to(device=device)
+    net = net.eval()
+    # pdb.set_trace()
+    net.load_weights(model_path=model_path,device=device)
+    renderer = NeRFEmbedRenderer.from_conf(
+        conf["renderer"], eval_batch_size=50000,
+    ).to(device=device)
+    render_par = renderer.bind_parallel(net).eval()
+    renderer.eval()
 
-# nerf_pnts = np.array(nerf_pnts).reshape(n_demo, n_key, -1, 3)
-# nerf_rgbs = np.array(nerf_rgbs).reshape(n_demo, n_key, -1, 3)
-# nerf_feat = np.array(nerf_feat).reshape(n_demo, n_key, -1, nerf_feature_dim)
-# print(nerf_pnts.shape, nerf_rgbs.shape, nerf_feat.shape)
+    # check if the directory exists
+    if not os.path.exists(nerf_feat_dir):
+        os.makedirs(nerf_feat_dir)
+    # load test image
+    nerf_pnts = []
+    nerf_rgbs = []
+    nerf_feat = []
+    with torch.no_grad():
+        for demo in range(n_demo):
+            for key in range(n_key):
+                test_image = os.path.join(position_dir, 'real'+str(demo),f'rgb{key}.png')
+                nerf_pnt, nerf_rgb, nerf_ft = extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz)
+                # pdb.set_trace()
+                # convert to numpy
+                nerf_pnt = nerf_pnt.cpu().numpy()
+                nerf_rgb = nerf_rgb.cpu().numpy()
+                nerf_ft = nerf_ft.cpu().numpy()
+                # save nerf_feat, nerf_pnts, nerf_rgbs in npz for each demo in each key
+                np.savez(os.path.join(nerf_feat_dir, f'nerf_feat_{demo}_{key}.npz'), nerf_feat=nerf_ft, nerf_pnts=nerf_pnt, nerf_rgbs=nerf_rgb)
+                # free memory
+                del nerf_pnt, nerf_rgb, nerf_ft
 
-pdb.set_trace()
+                # empty the cache
+                torch.cuda.empty_cache()  # release cache, very important!!!
+
+            #     nerf_pnts.append(nerf_pnt)
+            #     nerf_rgbs.append(nerf_rgb)
+            #     nerf_feat.append(nerf_ft)
+            #     # free memory
+            #     del nerf_pnt, nerf_rgb, nerf_ft
+            # # save nerf_feat, nerf_pnts, nerf_rgbs in npz for each demo
+            # nerf_feat = np.array(nerf_feat).reshape(n_key, -1, nerf_feature_dim)
+            # nerf_pnts = np.array(nerf_pnts).reshape(n_key, -1, 3)
+            # nerf_rgbs = np.array(nerf_rgbs).reshape(n_key, -1, 3)
+            # np.savez(os.path.join(nerf_feat_dir, f'nerf_feat_{demo}.npz'), nerf_feat=nerf_feat, nerf_pnts=nerf_pnts, nerf_rgbs=nerf_rgbs)
+            # # free memory
+            # del nerf_pnts, nerf_rgbs, nerf_feat
+            
+
+    # nerf_pnts = np.array(nerf_pnts).reshape(n_demo, n_key, -1, 3)
+    # nerf_rgbs = np.array(nerf_rgbs).reshape(n_demo, n_key, -1, 3)
+    # nerf_feat = np.array(nerf_feat).reshape(n_demo, n_key, -1, nerf_feature_dim)
+    # print(nerf_pnts.shape, nerf_rgbs.shape, nerf_feat.shape)
+
+# pdb.set_trace()
 
 pose_all = []
 for demo in range(n_demo):
@@ -1098,29 +1117,12 @@ print(xyz_all.shape, rotation_all.shape, gripper_open_all.shape)
 
 
 # bounds for Oven 
-bounds = torch.Tensor([-0.2, -0.3, -0.1, 0.8, 0.5, 0.9]) # set manually, later try to visualize the voxels in this computer to check the bounds
+bounds = torch.Tensor([-0.2, -0.3, -0.2, 0.8, 0.6, 0.8]) # set manually, later try to visualize the voxels in this computer to check the bounds
 vox_size = 100
 rotation_resolution = 5
-max_num_coords=220000
+max_num_coords=80000
 bs = 1
 _num_rotation_classes = 72
-
-
-
-# change the following desk2camera, adjust_ori_mat, and adjust_pos_mat each time we do the calibration
-# change the following desk2camera, adjust_ori_mat, and adjust_pos_mat each time we do the calibration
-desk2camera = [[0.9990809680298979, -0.04226655945655472, 0.007124413810835721, -0.21317943800854028], [-0.004920145095573605, 0.052028245371015504, 0.9986334932575875, 0.24697715742900836], [-0.04257947266795357, -0.997750770300539, 0.05177247214495428, 0.7521121095357662], [0.0, 0.0, 0.0, 1.0]]
-adjust_ori_mat = np.array([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
-adjust_pos_mat = np.array([[1, 0, 0, -0.08], [0, 1, 0, 0.16], [0, 0, 1, 0.01], [0, 0, 0, 1]])
-
-base2camera = desk2camera@adjust_ori_mat@adjust_pos_mat
-cam2base = np.linalg.inv(base2camera).reshape(4, 4)
-print('cam2base:', cam2base)
-
-gl2cv = transforms3d.euler.euler2mat(np.pi, 0, 0)
-gl2cv_homo = np.eye(4)
-gl2cv_homo[:3, :3] = gl2cv
-cam2base = cam2base @ gl2cv_homo
 
 # device = "cuda:3"
 # define different language instructions for differnt tasks 
@@ -1153,13 +1155,18 @@ voxelizer_feature = VoxelGrid(
     max_num_coords=max_num_coords,
 )
 
-
+if concat_nerf_rgb or concat_nerf_ori:
+    initial_dim = nerf_feature_dim + 10
+elif nerf_only:
+    initial_dim = nerf_feature_dim
+else:
+    initial_dim = 10
 # initialize PerceiverIO Transformer
 perceiver_encoder = PerceiverIO(
     depth=6,
     iterations=1,
     voxel_size=vox_size,
-    initial_dim=nerf_feature_dim,  # 10
+    initial_dim=initial_dim,  # 10
     low_dim_size=4,
     layer=0,
     num_rotation_classes=72,
@@ -1182,8 +1189,8 @@ perceiver_encoder = PerceiverIO(
 )
 qnet = copy.deepcopy(perceiver_encoder).to(device)
 
-# checkpoint = torch.load('/data/geyan21/projects/peract_for_real/real_ckpt_faucet/ckpt_5demo_ar_prev_aug_3_4_faucet_4key40000.pth')
-# qnet.load_state_dict(checkpoint)
+checkpoint = torch.load('/data/geyan21/projects/real-robot-nerf-actor/models/Nerfact/oven/nerf_concat_rgb/ckpt_5demo_4_keys15000.pth')
+qnet.load_state_dict(checkpoint)
 
 
 optimizer = torch.optim.Adam(qnet.parameters(), lr=0.0001, weight_decay=0.000001)
@@ -1195,6 +1202,7 @@ _transform_augmentation = True
 #_transform_augmentation_xyz = torch.Tensor([0.05, 0.05, 0.1])
 _transform_augmentation_xyz = torch.Tensor([0.125, 0.05, 0.05]) # set the range manually
 
+start_time = time.time()
 for iter in range(100000):
     demo = random.randint(0, n_demo-1)  # here we minus 1 because the range of random.randint(a,b) is [a,b] not [a, b)
     i = random.randint(0, n_key-1)
@@ -1212,8 +1220,21 @@ for iter in range(100000):
     action_ignore_collisions = ignore_collisions.int()
     
     # the current pointcloud observation
-    pcd_path = os.path.join(position_dir, 'real' + str(demo), 'pcd' + str(i) + '.ply')
-    pointcloud_robot, rgb = get_rgb_pcd(pcd_path, cam2base, device)
+    # pcd_path = os.path.join(position_dir, 'real' + str(demo), 'pcd' + str(i) + '.ply')
+    # pointcloud_robot, rgb = get_rgb_pcd(pcd_path, cam2base, device)
+    nerf_path = os.path.join(nerf_feat_dir, 'nerf_feat_' + str(demo) + '_' + str(i) + '.npz')
+    nerf_data = np.load(nerf_path)
+    pointcloud_robot = torch.Tensor(nerf_data['nerf_pnts'])
+    # transpose
+    pointcloud_robot = pointcloud_robot.unsqueeze(0)
+    rgb = torch.Tensor(nerf_data['nerf_rgbs'])
+    rgb = (rgb - 0.5) / 0.5
+    rgb = rgb.unsqueeze(0)
+    embedding = torch.Tensor(nerf_data['nerf_feat'])
+    embedding = embedding.unsqueeze(0)
+    # print(pointcloud_robot.shape, rgb.shape, embedding.shape)
+
+    # pdb.set_trace()
 
 
     # the current robot's state
@@ -1263,8 +1284,21 @@ for iter in range(100000):
     #print("voxel_grid:", voxel_grid.shape)
     voxel_grid = voxel_grid.permute(0, 4, 1, 2, 3).detach().to(device)
 
+    voxel_grid_feat = voxelizer_feature.coords_to_bounding_voxel_grid(
+        pointcloud_robot, coord_features=embedding, coord_bounds=bounds,only_features=True)
+    voxel_grid_feat = voxel_grid_feat.permute(0, 4, 1, 2, 3).detach().to(device)
+
+    if concat_nerf_rgb:
+        voxels = torch.cat([voxel_grid, voxel_grid_feat], 1)
+    elif nerf_only:
+        voxels = voxel_grid_feat
+    elif rgb_only:
+        voxels = voxel_grid
+
+    del voxel_grid, voxel_grid_feat
+
     #print(demo, i, xyz_all[demo][i], rotation_all[demo][i], gripper_open_all[demo][i], pcd_path, proprio)
-    q_trans, rot_grip_q, collision_q = qnet(voxel_grid, proprio, lang_goal_embs)
+    q_trans, rot_grip_q, collision_q = qnet(voxels, proprio, lang_goal_embs)
     #print(q_trans.shape, rot_and_grip_q.shape, collision_q.shape)
 
 
@@ -1309,7 +1343,16 @@ for iter in range(100000):
 
         total_loss = total_loss.item()
         if (iter + 1) % 20 == 0:
-            print(iter, demo, i, total_loss)
+            elapsed_time = time.time() - start_time
+            log_dict = {
+                        'n_iter': iter,
+                        'loss_pred': total_loss,
+                        'step_time': elapsed_time,
+                    }
+            if USE_WANDB:
+                wandb.log(log_dict)
+            print(f"Iteration:{iter}, demo:{demo}, step:{i}, Loss:{total_loss}, Time:{elapsed_time}")
+            start_time = time.time()
 
     # choose best action through argmax
     # coords_indicies, rot_and_grip_indicies, ignore_collision_indicies = choose_highest_action(q_trans,
@@ -1321,7 +1364,9 @@ for iter in range(100000):
     # res = (bounds_new[:, 3:] - bounds_new[:, :3]) / vox_size
     # continuous_trans = bounds_new[:, :3] + res * coords_indicies.int() + res / 2
 
-    if (iter+1) % 10000 == 0:
-     save_checkpoint(qnet, model_dir + 'kitchen1_box_generalize/ckpt_5demo_4_keys_box' + str(iter+1) + '.pth')
+    # torch.cuda.empty_cache()
+
+    if (iter+1) % 5000 == 0:
+     save_checkpoint(qnet, model_dir + 'oven/nerf_concat_rgb/ckpt_5demo_4_keys' + str(iter+1+15000) + '.pth')
 
     #print(i, continuous_trans)

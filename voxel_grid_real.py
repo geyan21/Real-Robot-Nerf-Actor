@@ -32,7 +32,7 @@ class VoxelGrid(nn.Module):
         self._voxel_shape_spec = torch.tensor(self._voxel_shape,
                                               ).unsqueeze(
             0) + 2  # +2 because we crop the edges.
-        coord_bounds = torch.Tensor([-0.1, -0.1, -0.2, 0.5, 0.8, 0.8])
+        # coord_bounds = torch.Tensor([-0.1, -0.1, -0.2, 0.5, 0.8, 0.8])
         self._coord_bounds = torch.tensor(coord_bounds, dtype=torch.float,
                                           ).unsqueeze(0)
         #print('bounds', self._coord_bounds)
@@ -173,7 +173,7 @@ class VoxelGrid(nn.Module):
         return flat_scatter.view(self._total_dims_list)
 
     def coords_to_bounding_voxel_grid(self, coords, coord_features=None,
-                                      coord_bounds=None):
+                                      coord_bounds=None, only_features=False):
         voxel_indicy_denmominator = self._voxel_indicy_denmominator
         res, bb_mins = self._res, self._bb_mins
         if coord_bounds is not None:
@@ -222,11 +222,16 @@ class VoxelGrid(nn.Module):
         occupied = (vox[..., -1:] > 0).float()
         vox = torch.cat([
             vox[..., :-1], occupied], -1)
-
-        return torch.cat(
+        
+        vox = torch.cat(
            [vox[..., :-1], self._index_grid[:, :-2, :-2, :-2] / self._voxel_d,
             vox[..., -1:]], -1)
 
+        if not only_features:
+            return vox
+        else: # remove the occupancy channel, coords and indices
+            return vox[..., :-7]
+    
     def coords_rgb_to_bounding_voxel_grid(self, rgb_emb, coords, coord_features=None,
                                       coord_bounds=None):
         voxel_indicy_denmominator = self._voxel_indicy_denmominator
