@@ -37,6 +37,13 @@ import transforms3d
 from pyhocon import ConfigFactory
 import open3d as o3d
 
+def PSNR_np(img1, img2, max_val=1):
+    mse = np.mean((img1 - img2) ** 2)
+    if mse == 0:
+        return 100
+    PIXEL_MAX = max_val
+    return 20 * np.log10(PIXEL_MAX / np.sqrt(mse))
+
 def save_single_channel_video(imgs:list, fname:str, buffer:str):
     """
     save a list of single channel images as a video
@@ -81,15 +88,16 @@ def save_single_channel_img(img,name):
 conf_path = "/data/geyan21/projects/real-robot-nerf-actor/featurenerf_robo/featurenerf/conf/exp/robo_dino_real.conf"
 conf = ConfigFactory.parse_file(conf_path)
 
-device = "cuda:1"
-id = 3
-# test_image = "/data/geyan21/projects/real-robot-nerf-actor/data/kitchen1_box_generalize/Peract_kitchen_generalize/grasp_green/real0/rgb1.png"   
+device = "cuda:3"
+id = 4
+# test_image = "/data/geyan21/projects/real-robot-nerf-actor/data/Nerfact_data/kitchen1/teapot/real0/rgb0.png"   
 test_image = f"/data/geyan21/projects/real-robot-nerf-actor/data/Nerfact_kitchen/oven/real0/rgb{id}.png"
 # model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_14imgs_1024/pixel_nerf_latest_00274000"
 # model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_14imgs_MV_1024/pixel_nerf_latest_00036000"
 # model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_14imgs_MV_512/pixel_nerf_latest_00160000"
-model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_14imgs_MV_512/pixel_nerf_latest_00396000"
-nerf_npz = f'/data/geyan21/projects/featurenerf-robo/Data/Nerf_ContrastMV_14imgs/Multi_step_img/Nerfreal_8_{id}.npz'
+# model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_14imgs_MV_512/pixel_nerf_latest_00396000"
+model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_three_Kitchens_three_tasks_512/backup6/pixel_nerf_latest_00084000"
+nerf_npz = '/data/geyan21/projects/featurenerf-robo/Data/NerfContrastMV/kitchen1/oven/step0/Nerfreal_8.npz'
 # model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_sep_14imgs/pixel_nerf_latest_00008000"
 # nerf_npz = f'/data/geyan21/projects/featurenerf-robo/Data/Nerf_ContrastMV/Multi_step_img/Nerfreal_8_{id}.npz'
 net = make_model(conf["model"]).to(device=device)
@@ -212,6 +220,9 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
             del render_dict
             del coarse
             del fine
+
+            psnr = PSNR_np(rgb_fine_np, gt)
+            print("psnr: ", psnr)
             
             depth_fine_cmap = util.cmap(depth_fine_np) 
             alpha_fine_cmap = util.cmap(alpha_fine_np) 
@@ -220,6 +231,20 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
 
             rgb_fine_np = Image.fromarray(rgb_fine_np)
             embed_fine_cmap = Image.fromarray(embed_fine_cmap)
+
+
+            import matplotlib.pyplot as plt
+            fig, axs = plt.subplots(1, 4)
+            axs[0].imshow(images_0to1.cpu().numpy().transpose(0, 2, 3, 1)[0])
+            axs[0].title.set_text('tgt')
+            axs[1].imshow(rgb_fine_np)
+            axs[1].title.set_text('psnr={:.2f}'.format(psnr))
+            axs[2].imshow(alpha_fine_cmap)
+            axs[2].title.set_text('alpha')
+            axs[3].imshow(depth_fine_cmap)
+            axs[3].title.set_text('depth')
+            plt.tight_layout()
+            plt.savefig(f".visualize_recon/all_step{id}.png")
 
             # save as image using Image
             if not os.path.exists(".visualize_recon/"):

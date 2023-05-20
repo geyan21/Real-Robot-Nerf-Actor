@@ -799,7 +799,7 @@ gl2cv_homo = np.eye(4)
 gl2cv_homo[:3, :3] = gl2cv
 cam2base = cam2base @ gl2cv_homo
 
-device = "cuda:1"
+device = "cuda:0"
 #description = "open the cabinet door"
 description = ["Turn the faucet", "Open the top oven door", "Place the Tea Pot on the stove"]
 tokens = clip.tokenize(description).numpy()
@@ -850,8 +850,8 @@ perceiver_encoder = PerceiverIO(
 qnet = copy.deepcopy(perceiver_encoder).to(device)
 
 # load pretrained model
-# checkpoint = torch.load('/data/geyan21/projects/real-robot-nerf-actor/models/kitchen_1_3_tasks/ckpt_5demo_multi_aug_2048_4_8_4key_150000.pth')
-# qnet.load_state_dict(checkpoint)
+checkpoint = torch.load('/data/geyan21/projects/real-robot-nerf-actor/models/two_kitchens/ckpt_5demo_multi_aug_2048_4key_180000.pth')
+qnet.load_state_dict(checkpoint)
 
 optimizer = torch.optim.Adam(qnet.parameters(), lr=0.0001, weight_decay=0.000001)
 _cross_entropy_loss = nn.CrossEntropyLoss(reduction='none')
@@ -997,6 +997,6 @@ for iter in range(200010):
     # continuous_trans = bounds_new[:, :3] + res * coords_indicies.int() + res / 2
 
     if (iter+1) % 10000 == 0:
-       save_checkpoint(qnet, model_dir + '/ckpt_5demo_multi_aug_2048_4key_' + str(iter+1) + '.pth')
+       save_checkpoint(qnet, model_dir + '/ckpt_5demo_multi_aug_2048_4key_' + str(iter+1+180000) + '.pth')
 
     #print(i, continuous_trans)
