@@ -1080,8 +1080,7 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
 import wandb
 USE_WANDB = True
 PROJECT_NAME = "real-robot-peract"
-model_name = "nerfact nerf only"
-# model_name = "nerfact_3d_encoder_joint_oven_stronger_aug" # peract for kitchen 1 , peract for 2 kitchens
+model_name = "nerfact_3d_encoder_joint_oven" # peract for kitchen 1 , peract for 2 kitchens
 if USE_WANDB:
     wandb.init(
             project=PROJECT_NAME, name=model_name, config={"model_for_real": "one_kitchen"},
@@ -1090,7 +1089,7 @@ if USE_WANDB:
     wandb.run.log_code(".")  # Need to first enable it on wandb web UI.
 
 # from extract_nerf_feat import extract_nerf_feat 
-device = "cuda:5"  
+device = "cuda:7"  
 n_demo =  5
 n_key = 4 # do not count the initial frame 
 H = 60  # 60
@@ -1101,10 +1100,21 @@ W = 80  # 80
 # nerf_npz = '/data/geyan21/projects/featurenerf-robo/Data/Nerf_ContrastMV_14imgs/Multi_step_img/Nerfreal_8_0.npz'
 # nerf_pnts, nerf_rgbs, nerf_feat = extract_nerf_feat(net, render_par, conf_path, device, model_path, test_image, nerf_npz)
 # pdb.set_trace()
-position_dir = '/data/geyan21/projects/Real-Robot-Nerf-Actor/Data/Nerfact_data/kitchen1/Oven'
-# model_dir = '/data/geyan21/projects/Real-Robot-Nerf-Actor/models' # save checkpoint
-model_dir = '/data/geyan21/projects/Real-Robot-Nerf-Actor/models/nerfonly'
+base_dir = '/data/geyan21/projects/real-robot-nerf-actor/data/Nerfact_data'
+model_dir = '/data/geyan21/projects/Real-Robot-Nerf-Actor/models/nerfact/two_kitchens/multi_task/5demos' # save checkpoint
 # nerf_feat_dir = '/data/geyan21/projects/real-robot-nerf-actor/data/Nerfact_kitchen/nerf_feat' # save nerf_feat, nerf_pnts, nerf_rgbs in npz for each demo
+# description = ["Turn the faucet", "Open the top oven door", "Place the Tea Pot on the stove"]
+description = ["Open the top oven door"]
+# description = ["Turn the faucet"]
+kitchens = ['kitchen1', 'kitchen2']
+# kitchens = ['kitchen1']
+# tasks = ['faucet', 'oven','teapot']
+tasks = ['oven']
+# tasks = ['faucet']
+n_kitchen = 2
+n_task = 1
+n_demo =  5
+n_key = 4 # don't count first key
 
 extract_nerf_feature = False
 if extract_nerf_feature:
@@ -1169,25 +1179,28 @@ if extract_nerf_feature:
 # pdb.set_trace()
 
 pose_all = []
-for demo in range(n_demo):
-    position_path = os.path.join(position_dir, str(demo)+'_xarm_position.txt')
-    f = open(position_path)
-    lines = f.readlines()
-    for line in lines:
-        line = line.strip().replace('[','').replace(']','')
-        line = line.split(',')
-        for value in line:
-            try:
-                pose_all.append(float(value))
-            except:
-                if 'True' in value:
-                    pose_all.append(1.0)
-                else:
-                    pose_all.append(0.0)
-pose_all = np.array(pose_all).reshape(n_demo, n_key+1, -1)
-xyz_all = pose_all[:, :, :3] * 0.001
-rotation_all = pose_all[:,:,3:6]
-gripper_open_all = pose_all[:,:,-1]
+for kitchen_id in range(n_kitchen):
+    for task_id in range(n_task):
+        for demo in range(n_demo):
+            position_path = os.path.join(base_dir, kitchens[kitchen_id], tasks[task_id], str(demo)+'_xarm_position.txt')
+            print(position_path)
+            f = open(position_path)
+            lines = f.readlines()
+            for line in lines:
+                line = line.strip().replace('[','').replace(']','')
+                line = line.split(',')
+                for value in line:
+                    try:
+                        pose_all.append(float(value))
+                    except:
+                        if 'True' in value:
+                            pose_all.append(1.0)
+                        else:
+                            pose_all.append(0.0)
+pose_all = np.array(pose_all).reshape(n_kitchen, n_task, n_demo, n_key+1, -1)
+xyz_all = pose_all[:, :, :, :, :3] * 0.001
+rotation_all = pose_all[:, :, :, :, 3:6]
+gripper_open_all = pose_all[:, :, :, :, -1]
 print(xyz_all.shape, rotation_all.shape, gripper_open_all.shape)
 
 rgb_all = []
@@ -1201,6 +1214,8 @@ for demo in range(n_demo):
         # rgb = rgb * 2.0 - 1.0
         rgb_all.append(rgb)
         # pdb.set_trace()
+
+
 rgb_all = torch.from_numpy(np.array(rgb_all).reshape(n_demo, n_key, H, W, 3)).float().to(device=device)
 
 focal = torch.from_numpy(np.array(76.18187,dtype=np.float32)).float().to(device=device)
@@ -1236,14 +1251,15 @@ gt_pose = torch.from_numpy(cam2base).float().to(device=device).unsqueeze(0)
 # device = "cuda:3"
 # define different language instructions for differnt tasks 
 #description = "open the cabinet door"
-description = "open the top oven door"
 # description = "turn the faucet"
 # description = "Place the white box into the right tank"
 tokens = clip.tokenize([description]).numpy()
 token_tensor = torch.from_numpy(tokens).to(device)
 clip_model, preprocess = clip.load("RN50", device=device)
 lang_feats, lang_embs = _clip_encode_text(clip_model, token_tensor)
-lang_goal_embs = lang_embs[0].float().detach().unsqueeze(0)
+lang_goal_embs_all = lang_embs.float().detach()
+print("lang_goal_embs_all shape:", lang_goal_embs_all.shape)
+#lang_goal_embs = lang_embs[0].float().detach().unsqueeze(0)
 lang_goal = np.array([description], dtype=object)
 
 voxelizer = VoxelGrid(
@@ -1303,8 +1319,7 @@ _transform_augmentation = True
 #_transform_augmentation_xyz = torch.Tensor([0.125, 0.125, 0.125])
 #_transform_augmentation_xyz = torch.Tensor([0.05, 0.05, 0.1])
 # _transform_augmentation_xyz = torch.Tensor([0.125, 0.05, 0.05]) # set the range manually
-# _transform_augmentation_xyz = torch.Tensor([0.05, 0.05, 0.05]) # set the range manually
-_transform_augmentation_xyz = torch.Tensor([0.1, 0.05, 0.1])
+_transform_augmentation_xyz = torch.Tensor([0.05, 0.05, 0.05]) # set the range manually
 
 start_time = time.time()
 for iter in range(400000):
@@ -1324,10 +1339,14 @@ for iter in range(400000):
     action_ignore_collisions = ignore_collisions.int()
     
     # the current pointcloud observation
-    pcd_path = os.path.join(position_dir, 'real' + str(demo), 'pcd' + str(i) + '.ply')
-    pointcloud_robot, rgb = get_rgb_pcd(pcd_path, cam2base, device)
+    pcd_path = os.path.join(base_dir,kitchens[kitchen_id], tasks[task_id], 'real' + str(demo), 'pcd' + str(i) + '.ply')
+    lang_goal_embs = lang_goal_embs_all[task_id].unsqueeze(0)
 
-    gt_rgb = rgb_all[demo][i].unsqueeze(0).to(device)
+    gt_rgb_path = os.path.join(base_dir,kitchens[kitchen_id], tasks[task_id], 'real' + str(demo), 'rgb' + str(i) + '.png')
+    gt_rgb = Image.open(gt_rgb_path)
+    gt_rgb = gt_rgb.resize((W, H))  # 60 80
+    gt_rgb = np.array(gt_rgb) / 255.0
+    gt_rgb = torch.from_numpy(gt_rgb).float().to(device=device).unsqueeze(0).permute(0, 3, 1, 2)
     
     # print(pointcloud_robot.shape, rgb.shape, embedding.shape)
 
@@ -1445,11 +1464,11 @@ for iter in range(400000):
         
         loss_BC = total_loss.item()
 
-        # lambda_nerf = 0.01
-        # lambda_BC = 1.0
+        lambda_nerf = 0.01
+        lambda_BC = 1.0
 
-        lambda_nerf = 1.0
-        lambda_BC = 0.0
+        # lambda_nerf = 1.0
+        # lambda_BC = 0.0
 
         total_loss =  lambda_BC * total_loss + lambda_nerf * rendering_loss_dict['loss']
 
@@ -1518,6 +1537,6 @@ for iter in range(400000):
     # torch.cuda.empty_cache()
 
     if (iter+1) % 10000 == 0:
-     save_checkpoint(qnet, model_dir + '/oven/3d_nerf/ckpt_5demo_4_keys' + str(iter+1) + '.pth')
+     save_checkpoint(qnet, model_dir + 'oven/3d_nerf/ckpt_5demo_4_keys' + str(iter+1) + '.pth')
 
     #print(i, continuous_trans)
