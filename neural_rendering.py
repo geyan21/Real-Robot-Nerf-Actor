@@ -674,6 +674,7 @@ class NeuralRenderer(nn.Module):
         loss_embed_coarse = lambda_embed * F.mse_loss(outputs.coarse.embed, gt_embed)
         loss_embed_fine = lambda_embed * F.mse_loss(outputs.fine.embed, gt_embed)
         loss +=  loss_embed_coarse +  loss_embed_fine
+        
 
         # depth loss
         if gt_depth is not None:

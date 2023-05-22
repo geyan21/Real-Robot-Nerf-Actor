@@ -1078,9 +1078,10 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
 
 
 import wandb
-USE_WANDB = False
+USE_WANDB = True
 PROJECT_NAME = "real-robot-peract"
-model_name = "nerfact_multi_5demos" # change this name for each model
+model_name = "nerfact_two_kitchens_multi_5demos_nerf_10" # change this name for each model
+# model_name = "nerfact_two_kitchens_multi_5demos" # change this name for each model
 if USE_WANDB:
     wandb.init(
             project=PROJECT_NAME, name=model_name, config={"model_for_real": "one_kitchen"},
@@ -1089,8 +1090,9 @@ if USE_WANDB:
     wandb.run.log_code(".")  # Need to first enable it on wandb web UI.
 
 # from extract_nerf_feat import extract_nerf_feat 
-device = "cuda:7"  
-n_data = 20
+device = "cuda:6"  
+total_iter = 200010
+n_data = 5   # 20
 n_demo =  5  # 5, 10, 20
 n_kitchen = 2
 n_task = 3
@@ -1100,11 +1102,12 @@ W = 80  # 80
 focal = torch.from_numpy(np.array(76.18187,dtype=np.float32)).float().to(device=device)  # for 60*80
 # focal = torch.from_numpy(np.array(153.0,dtype=np.float32)).float().to(device=device)   # for 128*128
 
-
-base_dir = '/data/geyan21/projects/Real-Robot-Nerf-Actor/Data_20demos/Nerfact_data'
+base_dir = '/data/geyan21/projects/Real-Robot-Nerf-Actor/Data_5demos/Nerfact_data'
+# base_dir = '/data/geyan21/projects/Real-Robot-Nerf-Actor/Data_20demos/Nerfact_data'
 model_dir = f'/data/geyan21/projects/Real-Robot-Nerf-Actor/models/nerfact/{model_name}/' # save checkpoint
 checkpoint_path = None
 resume = False
+nerfonly = True
 # nerf_feat_dir = '/data/geyan21/projects/real-robot-nerf-actor/data/Nerfact_kitchen/nerf_feat' # save nerf_feat, nerf_pnts, nerf_rgbs in npz for each demo
 description = ["Turn the faucet", "Open the top oven door", "Place the Tea Pot on the stove"]
 # description = ["Open the top oven door"]
@@ -1250,7 +1253,7 @@ total_loss = 0.
 backprop = True
 
 start_time = time.time()
-for iter in range(400000):
+for iter in range(total_iter):
     kitchen_id = random.randint(0, n_kitchen-1)
     task_id = random.randint(0, n_task-1)
     demo = random.randint(0, n_demo-1)
@@ -1345,6 +1348,8 @@ for iter in range(400000):
     q_trans, rot_grip_q, collision_q, voxel_grid_feature = qnet(voxel_grid, proprio, lang_goal_embs)
     #print(q_trans.shape, rot_and_grip_q.shape, collision_q.shape)
 
+    del voxel_grid, proprio
+
 
     action_trans_one_hot, action_rot_x_one_hot, \
         action_rot_y_one_hot, action_rot_z_one_hot, \
@@ -1393,7 +1398,7 @@ for iter in range(400000):
         
         loss_BC = total_loss.item()
 
-        lambda_nerf = 0.01
+        lambda_nerf = 10.0  # 0.01
         lambda_BC = 1.0
 
         # lambda_nerf = 1.0
@@ -1415,7 +1420,7 @@ for iter in range(400000):
                                             voxel_density=None, \
                                                 voxel_pose=None, \
                                         tgt_pose=gt_pose, focal=focal, c=None,)
-            os.makedirs(f'/data/geyan21/projects/Real-Robot-Nerf-Actor/{model_name}/recon', exist_ok=True)
+            os.makedirs(f'/data/geyan21/projects/Real-Robot-Nerf-Actor/visual_render/{model_name}/recon', exist_ok=True)
             import matplotlib.pyplot as plt
             fig, axs = plt.subplots(1, 3)
             rgb_src = gt_rgb[0].detach().cpu().numpy()
@@ -1428,8 +1433,8 @@ for iter in range(400000):
             axs[2].imshow(embed_render)
             axs[2].title.set_text('embed')
             plt.tight_layout()
-            plt.savefig(f'/data/geyan21/projects/Real-Robot-Nerf-Actor/{model_name}/recon/{iter}_rgb.png')
-            cprint(f'Saved recon/{iter}_rgb.png locally.', 'cyan')
+            plt.savefig(f'/data/geyan21/projects/Real-Robot-Nerf-Actor/visual_render/{model_name}/recon/{iter}_rgb.png')
+            cprint(f'Saved visual_render/{model_name}/recon/{iter}_rgb.png locally.', 'cyan')
             # rgb_render = (rgb_render * 255).astype(np.uint8)
             # rgb_render = Image.fromarray(rgb_render)
             # rgb_render.save(os.path.join(model_dir, 'oven/render_rgb'+str(iter+1)+'.png'))

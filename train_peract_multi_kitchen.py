@@ -17,7 +17,7 @@ from torch import nn, einsum
 from einops import rearrange, repeat, reduce
 from einops.layers.torch import Reduce
 from network_utils import DenseBlock, SpatialSoftmax3D, Conv3DBlock, ConvTranspose3DBlock, Conv3DUpsampleBlock
-
+import time
 
 def point_to_voxel_index(
         point: np.ndarray,
@@ -733,7 +733,10 @@ def save_checkpoint(model, save_path):
 import wandb
 USE_WANDB = True
 PROJECT_NAME = "real-robot-peract"
-model_name = "peract for two kitchens" # peract for kitchen 1 , peract for 2 kitchens
+# model_name = "peract for two kitchens and 5 demos multi task"
+# model_name = "peract for two kitchens and 5 demos single task Oven" # peract for kitchen 1 , peract for 2 kitchens
+# model_name = "peract for two kitchens and 5 demos single task Faucet"
+model_name = "peract_two_kitchens_multi_20_demos"
 if USE_WANDB:
     wandb.init(
             project=PROJECT_NAME, name=model_name, config={"model_for_real": "two_kitchens"},
@@ -742,20 +745,36 @@ if USE_WANDB:
     wandb.run.log_code(".")  # Need to first enable it on wandb web UI.
 
 pose_all = []
-base_dir = '/data/geyan21/projects/real-robot-nerf-actor/data/Nerfact_data'
-model_dir = '/data/geyan21/projects/real-robot-nerf-actor/models/two_kitchens'
+device = "cuda:3"
+base_dir = '/data/geyan21/projects/Real-Robot-Nerf-Actor/data/20demos/Nerfact_data'
+# model_dir = '/data/geyan21/projects/real-robot-nerf-actor/models/two_kitchens/multi_task/5demos'
+# model_dir = '/data/geyan21/projects/real-robot-nerf-actor/models/two_kitchens/single_task/Oven/5demos'
+# model_dir = '/data/geyan21/projects/real-robot-nerf-actor/models/two_kitchens/single_task/Faucet/5demos'
+model_dir = f'/data/geyan21/projects/Real-Robot-Nerf-Actor/models/{model_name}/'
+description = ["Turn the faucet", "Open the top oven door", "Place the Tea Pot on the stove"]
+# description = ["Place the Tea Pot on the stove"]
 kitchens = ['kitchen1', 'kitchen2']
+# kitchens = ['kitchen1']
 tasks = ['faucet', 'oven','teapot']
+# tasks = ['oven']
+# tasks = ['faucet']
+# tasks = ['teapot']
+n_data = 20
 n_kitchen = 2
 n_task = 3
-n_demo =  5
+n_demo =  20
 n_key = 4 # don't count first key
+total_iter = 800010
 
+# randomly select n_demo from 20 demos starting from 0 to 19
+demo_ids = np.random.choice(n_data, n_demo, replace=False)
+demo_ids = np.sort(demo_ids)
+print("demo_ids: ", demo_ids)
 
 
 for kitchen_id in range(n_kitchen):
     for task_id in range(n_task):
-        for demo in range(n_demo):
+        for demo in demo_ids:
             position_path = os.path.join(base_dir, kitchens[kitchen_id], tasks[task_id], str(demo)+'_xarm_position.txt')
             print(position_path)
             f = open(position_path)
@@ -799,9 +818,8 @@ gl2cv_homo = np.eye(4)
 gl2cv_homo[:3, :3] = gl2cv
 cam2base = cam2base @ gl2cv_homo
 
-device = "cuda:0"
+print(description)
 #description = "open the cabinet door"
-description = ["Turn the faucet", "Open the top oven door", "Place the Tea Pot on the stove"]
 tokens = clip.tokenize(description).numpy()
 token_tensor = torch.from_numpy(tokens).to(device)
 clip_model, preprocess = clip.load("RN50", device=device)
@@ -849,9 +867,9 @@ perceiver_encoder = PerceiverIO(
 )
 qnet = copy.deepcopy(perceiver_encoder).to(device)
 
-# load pretrained model
-checkpoint = torch.load('/data/geyan21/projects/real-robot-nerf-actor/models/two_kitchens/ckpt_5demo_multi_aug_2048_4key_180000.pth')
-qnet.load_state_dict(checkpoint)
+# # load pretrained model
+# checkpoint = torch.load('/data/geyan21/projects/real-robot-nerf-actor/models/two_kitchens/ckpt_5demo_multi_aug_2048_4key_180000.pth')
+# qnet.load_state_dict(checkpoint)
 
 optimizer = torch.optim.Adam(qnet.parameters(), lr=0.0001, weight_decay=0.000001)
 _cross_entropy_loss = nn.CrossEntropyLoss(reduction='none')
@@ -865,7 +883,8 @@ _transform_augmentation = True
 _transform_augmentation_xyz = torch.Tensor([0.1, 0.05, 0.1])
 #_transform_augmentation_xyz = torch.Tensor([0.125, 0, 0])
 
-for iter in range(200010):
+start_time = time.time()
+for iter in range(total_iter):
     kitchen_id = random.randint(0, n_kitchen-1)
     task_id = random.randint(0, n_task-1)
     demo = random.randint(0, n_demo-1)
@@ -882,7 +901,7 @@ for iter in range(200010):
     action_rot_grip = rot_and_grip_indicies.int()
     action_ignore_collisions = ignore_collisions.int()
 
-    pcd_path = os.path.join(base_dir,kitchens[kitchen_id], tasks[task_id], 'real' + str(demo), 'pcd' + str(i) + '.ply')
+    pcd_path = os.path.join(base_dir,kitchens[kitchen_id], tasks[task_id], 'real' + str(demo_ids[demo]), 'pcd' + str(i) + '.ply')
     lang_goal_embs = lang_goal_embs_all[task_id].unsqueeze(0)
 
     pointcloud_robot, rgb = get_rgb_pcd(pcd_path, cam2base, device)
@@ -979,13 +998,15 @@ for iter in range(200010):
 
         total_loss = total_loss.item()
         if (iter + 1) % 50 == 0:
+            elapsed_time = time.time() - start_time
             log_dict = {
                         'n_iter': iter,
                         'loss_pred': total_loss,
                     }
-            wandb.log(log_dict)
-            print(iter, kitchen_id, task_id, demo, i, total_loss)
-
+            if USE_WANDB:
+                wandb.log(log_dict)
+            print(f"Iteration:{iter} | demo:{demo_ids[demo]} | step:{i} | L_BC:{total_loss}, Time:{elapsed_time}")
+            start_time = time.time()
     # choose best action through argmax
     # coords_indicies, rot_and_grip_indicies, ignore_collision_indicies = choose_highest_action(q_trans,
     #                                                                                              rot_grip_q,
@@ -997,6 +1018,6 @@ for iter in range(200010):
     # continuous_trans = bounds_new[:, :3] + res * coords_indicies.int() + res / 2
 
     if (iter+1) % 10000 == 0:
-       save_checkpoint(qnet, model_dir + '/ckpt_5demo_multi_aug_2048_4key_' + str(iter+1+180000) + '.pth')
+       save_checkpoint(qnet, model_dir + f'ckpt_{n_demo}demo_multi_aug_2048_{n_key}key_' + str(iter+1) + '.pth')
 
     #print(i, continuous_trans)
