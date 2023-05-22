@@ -1078,9 +1078,9 @@ def extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz):
 
 
 import wandb
-USE_WANDB = True
+USE_WANDB = False
 PROJECT_NAME = "real-robot-peract"
-model_name = "nerfact_3d_encoder_joint_oven" # peract for kitchen 1 , peract for 2 kitchens
+model_name = "nerfact_multi_5demos" # change this name for each model
 if USE_WANDB:
     wandb.init(
             project=PROJECT_NAME, name=model_name, config={"model_for_real": "one_kitchen"},
@@ -1090,98 +1090,53 @@ if USE_WANDB:
 
 # from extract_nerf_feat import extract_nerf_feat 
 device = "cuda:7"  
-n_demo =  5
+n_data = 20
+n_demo =  5  # 5, 10, 20
+n_kitchen = 2
+n_task = 3
 n_key = 4 # do not count the initial frame 
 H = 60  # 60
 W = 80  # 80
+focal = torch.from_numpy(np.array(76.18187,dtype=np.float32)).float().to(device=device)  # for 60*80
+# focal = torch.from_numpy(np.array(153.0,dtype=np.float32)).float().to(device=device)   # for 128*128
 
 
-# test_image = "/data/geyan21/projects/real-robot-nerf-actor/data/Nerf_kitchen2/Oven/real0/rgb3.png"
-# nerf_npz = '/data/geyan21/projects/featurenerf-robo/Data/Nerf_ContrastMV_14imgs/Multi_step_img/Nerfreal_8_0.npz'
-# nerf_pnts, nerf_rgbs, nerf_feat = extract_nerf_feat(net, render_par, conf_path, device, model_path, test_image, nerf_npz)
-# pdb.set_trace()
-base_dir = '/data/geyan21/projects/real-robot-nerf-actor/data/Nerfact_data'
-model_dir = '/data/geyan21/projects/Real-Robot-Nerf-Actor/models/nerfact/two_kitchens/multi_task/5demos' # save checkpoint
+base_dir = '/data/geyan21/projects/Real-Robot-Nerf-Actor/Data_20demos/Nerfact_data'
+model_dir = f'/data/geyan21/projects/Real-Robot-Nerf-Actor/models/nerfact/{model_name}/' # save checkpoint
+checkpoint_path = None
+resume = False
 # nerf_feat_dir = '/data/geyan21/projects/real-robot-nerf-actor/data/Nerfact_kitchen/nerf_feat' # save nerf_feat, nerf_pnts, nerf_rgbs in npz for each demo
-# description = ["Turn the faucet", "Open the top oven door", "Place the Tea Pot on the stove"]
-description = ["Open the top oven door"]
+description = ["Turn the faucet", "Open the top oven door", "Place the Tea Pot on the stove"]
+# description = ["Open the top oven door"]
 # description = ["Turn the faucet"]
+# description = ["Place the Tea Pot on the stove"]
 kitchens = ['kitchen1', 'kitchen2']
 # kitchens = ['kitchen1']
-# tasks = ['faucet', 'oven','teapot']
-tasks = ['oven']
+# kitchens = ['kitchen2']
+tasks = ['faucet', 'oven','teapot']
+# tasks = ['oven']
+# tasks = ['teapot']
 # tasks = ['faucet']
-n_kitchen = 2
-n_task = 1
-n_demo =  5
-n_key = 4 # don't count first key
 
-extract_nerf_feature = False
-if extract_nerf_feature:
-    conf_path = "/data/geyan21/projects/real-robot-nerf-actor/featurenerf_robo/featurenerf/conf/exp/robo_dino_real.conf"
-    model_path = "/data/geyan21/projects/featurenerf-robo/featurenerf/checkpoints/robo_dino_real_Nerf_ContrastMV_14imgs_MV_512/pixel_nerf_latest_00396000"
 
-    conf = ConfigFactory.parse_file(conf_path)
-    net = make_model(conf["model"]).to(device=device)
-    net = net.eval()
-    # pdb.set_trace()
-    net.load_weights(model_path=model_path,device=device)
-    renderer = NeRFEmbedRenderer.from_conf(
-        conf["renderer"], eval_batch_size=50000,
-    ).to(device=device)
-    render_par = renderer.bind_parallel(net).eval()
-    renderer.eval()
+# randomly select n_demo from 20 demos starting from 0 to 19
+demo_ids = np.random.choice(n_data, n_demo, replace=False)
+demo_ids = np.sort(demo_ids)
+print("demo_ids: ", demo_ids)
 
-    # check if the directory exists
-    if not os.path.exists(nerf_feat_dir):
-        os.makedirs(nerf_feat_dir)
-    # load test image
-    nerf_pnts = []
-    nerf_rgbs = []
-    nerf_feat = []
-    with torch.no_grad():
-        for demo in range(n_demo):
-            for key in range(n_key):
-                test_image = os.path.join(position_dir, 'real'+str(demo),f'rgb{key}.png')
-                nerf_pnt, nerf_rgb, nerf_ft = extract_nerf_feat(conf_path, device, model_path, test_image, nerf_npz)
-                # pdb.set_trace()
-                # convert to numpy
-                nerf_pnt = nerf_pnt.cpu().numpy()
-                nerf_rgb = nerf_rgb.cpu().numpy()
-                nerf_ft = nerf_ft.cpu().numpy()
-                # save nerf_feat, nerf_pnts, nerf_rgbs in npz for each demo in each key
-                np.savez(os.path.join(nerf_feat_dir, f'nerf_feat_{demo}_{key}.npz'), nerf_feat=nerf_ft, nerf_pnts=nerf_pnt, nerf_rgbs=nerf_rgb)
-                # free memory
-                del nerf_pnt, nerf_rgb, nerf_ft
-
-                # empty the cache
-                torch.cuda.empty_cache()  # release cache, very important!!!
-
-            #     nerf_pnts.append(nerf_pnt)
-            #     nerf_rgbs.append(nerf_rgb)
-            #     nerf_feat.append(nerf_ft)
-            #     # free memory
-            #     del nerf_pnt, nerf_rgb, nerf_ft
-            # # save nerf_feat, nerf_pnts, nerf_rgbs in npz for each demo
-            # nerf_feat = np.array(nerf_feat).reshape(n_key, -1, nerf_feature_dim)
-            # nerf_pnts = np.array(nerf_pnts).reshape(n_key, -1, 3)
-            # nerf_rgbs = np.array(nerf_rgbs).reshape(n_key, -1, 3)
-            # np.savez(os.path.join(nerf_feat_dir, f'nerf_feat_{demo}.npz'), nerf_feat=nerf_feat, nerf_pnts=nerf_pnts, nerf_rgbs=nerf_rgbs)
-            # # free memory
-            # del nerf_pnts, nerf_rgbs, nerf_feat
-            
-
-    # nerf_pnts = np.array(nerf_pnts).reshape(n_demo, n_key, -1, 3)
-    # nerf_rgbs = np.array(nerf_rgbs).reshape(n_demo, n_key, -1, 3)
-    # nerf_feat = np.array(nerf_feat).reshape(n_demo, n_key, -1, nerf_feature_dim)
-    # print(nerf_pnts.shape, nerf_rgbs.shape, nerf_feat.shape)
-
-# pdb.set_trace()
+# bounds for Oven 
+bounds = torch.Tensor([-0.1, -0.3, -0.2, 0.8, 0.7, 0.7]) # set manually, later try to visualize the voxels in this computer to check the bounds
+_transform_augmentation = True
+#_transform_augmentation_xyz = torch.Tensor([0.125, 0.125, 0.125])
+#_transform_augmentation_xyz = torch.Tensor([0.05, 0.05, 0.1])
+# _transform_augmentation_xyz = torch.Tensor([0.125, 0.05, 0.05]) # set the range manually
+# _transform_augmentation_xyz = torch.Tensor([0.05, 0.05, 0.05]) # set the range manually
+_transform_augmentation_xyz = torch.Tensor([0.1, 0.05, 0.1])
 
 pose_all = []
 for kitchen_id in range(n_kitchen):
     for task_id in range(n_task):
-        for demo in range(n_demo):
+        for demo in demo_ids:
             position_path = os.path.join(base_dir, kitchens[kitchen_id], tasks[task_id], str(demo)+'_xarm_position.txt')
             print(position_path)
             f = open(position_path)
@@ -1203,28 +1158,7 @@ rotation_all = pose_all[:, :, :, :, 3:6]
 gripper_open_all = pose_all[:, :, :, :, -1]
 print(xyz_all.shape, rotation_all.shape, gripper_open_all.shape)
 
-rgb_all = []
-for demo in range(n_demo):
-    for key in range(n_key):
-        rgb_path = os.path.join(position_dir, 'real'+str(demo),f'rgb{key}.png')
-        rgb = Image.open(rgb_path)
-        rgb = rgb.resize((W, H))  # 60 80
-        rgb = np.array(rgb) / 255.0
-        # normalize to -1, 1
-        # rgb = rgb * 2.0 - 1.0
-        rgb_all.append(rgb)
-        # pdb.set_trace()
 
-
-rgb_all = torch.from_numpy(np.array(rgb_all).reshape(n_demo, n_key, H, W, 3)).float().to(device=device)
-
-focal = torch.from_numpy(np.array(76.18187,dtype=np.float32)).float().to(device=device)
-# focal = torch.from_numpy(np.array(153.0,dtype=np.float32)).float().to(device=device)
-
-
-
-# bounds for Oven 
-bounds = torch.Tensor([-0.1, -0.3, -0.2, 0.8, 0.7, 0.7]) # set manually, later try to visualize the voxels in this computer to check the bounds
 vox_size = 100
 rotation_resolution = 5
 max_num_coords=220000
@@ -1253,14 +1187,14 @@ gt_pose = torch.from_numpy(cam2base).float().to(device=device).unsqueeze(0)
 #description = "open the cabinet door"
 # description = "turn the faucet"
 # description = "Place the white box into the right tank"
-tokens = clip.tokenize([description]).numpy()
+tokens = clip.tokenize(description).numpy()
 token_tensor = torch.from_numpy(tokens).to(device)
 clip_model, preprocess = clip.load("RN50", device=device)
 lang_feats, lang_embs = _clip_encode_text(clip_model, token_tensor)
 lang_goal_embs_all = lang_embs.float().detach()
 print("lang_goal_embs_all shape:", lang_goal_embs_all.shape)
 #lang_goal_embs = lang_embs[0].float().detach().unsqueeze(0)
-lang_goal = np.array([description], dtype=object)
+lang_goal = np.array(description, dtype=object)
 
 voxelizer = VoxelGrid(
     coord_bounds=bounds,
@@ -1300,35 +1234,31 @@ perceiver_encoder = PerceiverIO(
 )
 qnet = copy.deepcopy(perceiver_encoder).to(device)
 
+if resume:
+    checkpoint = torch.load(checkpoint_path)
+    qnet.load_state_dict(checkpoint)
+
 conf_path = "/data/geyan21/projects/Real-Robot-Nerf-Actor/nerfact.conf"
 conf = ConfigFactory.parse_file(conf_path)
 conf['neural_renderer'].image_width = W
 conf['neural_renderer'].image_height = H
 neural_renderer = NeuralRenderer(conf['neural_renderer'], coordinate_bounds = bounds).to(device)
 
-
-# checkpoint = torch.load('/data/geyan21/projects/real-robot-nerf-actor/models/Nerfact/oven/nerf_concat_rgb/ckpt_5demo_4_keys15000.pth')
-# qnet.load_state_dict(checkpoint)
-
-
 optimizer = torch.optim.Adam(qnet.parameters(), lr=0.0001, weight_decay=0.000001)
 _cross_entropy_loss = nn.CrossEntropyLoss(reduction='none')
 total_loss = 0.
 backprop = True
-_transform_augmentation = True
-#_transform_augmentation_xyz = torch.Tensor([0.125, 0.125, 0.125])
-#_transform_augmentation_xyz = torch.Tensor([0.05, 0.05, 0.1])
-# _transform_augmentation_xyz = torch.Tensor([0.125, 0.05, 0.05]) # set the range manually
-_transform_augmentation_xyz = torch.Tensor([0.05, 0.05, 0.05]) # set the range manually
 
 start_time = time.time()
 for iter in range(400000):
-    demo = random.randint(0, n_demo-1)  # here we minus 1 because the range of random.randint(a,b) is [a,b] not [a, b)
+    kitchen_id = random.randint(0, n_kitchen-1)
+    task_id = random.randint(0, n_task-1)
+    demo = random.randint(0, n_demo-1)
     i = random.randint(0, n_key-1)
-    j = 1 # the next keyframe action
+    j = 1
 
     # the next keyframe groundtruth action
-    trans_indicies, rot_and_grip_indicies, ignore_collisions = get_action(xyz_all[demo][i+j], rotation_all[demo][i+j], gripper_open_all[demo][i+j], 1, bounds, vox_size, rotation_resolution)
+    trans_indicies, rot_and_grip_indicies, ignore_collisions = get_action(xyz_all[kitchen_id][task_id][demo][i+j], rotation_all[kitchen_id][task_id][demo][i+j], gripper_open_all[kitchen_id][task_id][demo][i+j], 1, bounds, vox_size, rotation_resolution)
     trans_indicies = torch.Tensor(trans_indicies).to(device).unsqueeze(0)
     rot_and_grip_indicies  = torch.Tensor(rot_and_grip_indicies).to(device).unsqueeze(0)
     ignore_collisions = torch.Tensor(ignore_collisions).to(device).unsqueeze(0)
@@ -1339,25 +1269,23 @@ for iter in range(400000):
     action_ignore_collisions = ignore_collisions.int()
     
     # the current pointcloud observation
-    pcd_path = os.path.join(base_dir,kitchens[kitchen_id], tasks[task_id], 'real' + str(demo), 'pcd' + str(i) + '.ply')
+    pcd_path = os.path.join(base_dir,kitchens[kitchen_id], tasks[task_id], 'real' + str(demo_ids[demo]), 'pcd' + str(i) + '.ply')
+    pointcloud_robot, rgb = get_rgb_pcd(pcd_path, cam2base, device)
     lang_goal_embs = lang_goal_embs_all[task_id].unsqueeze(0)
+    lang_goal_cur = lang_goal[task_id]
 
-    gt_rgb_path = os.path.join(base_dir,kitchens[kitchen_id], tasks[task_id], 'real' + str(demo), 'rgb' + str(i) + '.png')
+    gt_rgb_path = os.path.join(base_dir,kitchens[kitchen_id], tasks[task_id], 'real' + str(demo_ids[demo]), 'rgb' + str(i) + '.png')
     gt_rgb = Image.open(gt_rgb_path)
     gt_rgb = gt_rgb.resize((W, H))  # 60 80
     gt_rgb = np.array(gt_rgb) / 255.0
-    gt_rgb = torch.from_numpy(gt_rgb).float().to(device=device).unsqueeze(0).permute(0, 3, 1, 2)
+    gt_rgb = torch.from_numpy(gt_rgb).float().to(device=device).unsqueeze(0)
     
-    # print(pointcloud_robot.shape, rgb.shape, embedding.shape)
-
-    # pdb.set_trace()
-
 
     # the current robot's state
-    trans_indicies_prev, rot_and_grip_indicies_prev, _ = get_action(xyz_all[demo][i], rotation_all[demo][i],
-                                                                            gripper_open_all[demo][i], 1, bounds,
+    trans_indicies_prev, rot_and_grip_indicies_prev, _ = get_action(xyz_all[kitchen_id][task_id][demo][i], rotation_all[kitchen_id][task_id][demo][i],
+                                                                            gripper_open_all[kitchen_id][task_id][demo][i], 1, bounds,
                                                                             vox_size, rotation_resolution)
-    xyz_prev = torch.Tensor(xyz_all[demo][i]).unsqueeze(0)
+    xyz_prev = torch.Tensor(xyz_all[kitchen_id][task_id][demo][i]).unsqueeze(0)
 
     
     trans_indicies_prev = torch.Tensor(trans_indicies_prev).to(device).unsqueeze(0)
@@ -1371,9 +1299,10 @@ for iter in range(400000):
         # when we do augmentation, we need to use the same parameters for both the current and the next actions 
         #print('transform_augmentation')
         action_trans_cat = torch.cat([action_trans_prev, action_trans], 0)
-        xyz_cat = torch.cat([xyz_prev, torch.Tensor(xyz_all[demo][i+j]).unsqueeze(0)], 0)
+        xyz_cat = torch.cat([xyz_prev, torch.Tensor(xyz_all[kitchen_id][task_id][demo][i+j]).unsqueeze(0)], 0)
         pointcloud_robot_cat = torch.cat([pointcloud_robot, pointcloud_robot], 0)
         bounds_cat = torch.cat([bounds.unsqueeze(0), bounds.unsqueeze(0)], 0)
+
 
         # print(action_trans_cat.shape, xyz_cat.shape, pointcloud_robot_cat.shape, bounds_cat.shape)
         
@@ -1460,7 +1389,7 @@ for iter in range(400000):
                                                 voxel_poses=gt_pose, \
                                                 gt_depth=None, \
                                                 focal=focal, c=None, gt_rgb=gt_rgb,
-                                                gt_pose=gt_pose, lang_goal=lang_goal,gt_embed=None)
+                                                gt_pose=gt_pose, lang_goal=lang_goal_cur,gt_embed=None)
         
         loss_BC = total_loss.item()
 
@@ -1486,7 +1415,7 @@ for iter in range(400000):
                                             voxel_density=None, \
                                                 voxel_pose=None, \
                                         tgt_pose=gt_pose, focal=focal, c=None,)
-            os.makedirs('/data/geyan21/projects/Real-Robot-Nerf-Actor/recon', exist_ok=True)
+            os.makedirs(f'/data/geyan21/projects/Real-Robot-Nerf-Actor/{model_name}/recon', exist_ok=True)
             import matplotlib.pyplot as plt
             fig, axs = plt.subplots(1, 3)
             rgb_src = gt_rgb[0].detach().cpu().numpy()
@@ -1499,7 +1428,7 @@ for iter in range(400000):
             axs[2].imshow(embed_render)
             axs[2].title.set_text('embed')
             plt.tight_layout()
-            plt.savefig(f'/data/geyan21/projects/Real-Robot-Nerf-Actor/recon/{iter}_rgb.png')
+            plt.savefig(f'/data/geyan21/projects/Real-Robot-Nerf-Actor/{model_name}/recon/{iter}_rgb.png')
             cprint(f'Saved recon/{iter}_rgb.png locally.', 'cyan')
             # rgb_render = (rgb_render * 255).astype(np.uint8)
             # rgb_render = Image.fromarray(rgb_render)
@@ -1521,7 +1450,7 @@ for iter in range(400000):
             }
             if USE_WANDB:
                 wandb.log(log_dict)
-            print(f"Iteration:{iter} | demo:{demo} | step:{i} | Loss:{total_loss} | L_BC:{loss_BC} | L_rgb: {loss_rgb_item:.3f} | L_embed: {loss_embed_item:.3f} psnr: {psnr:.3f}, Time:{elapsed_time}")
+            print(f"Iteration:{iter} | demo:{demo_ids[demo]} | step:{i} | Loss:{total_loss} | L_BC:{loss_BC} | L_rgb: {loss_rgb_item:.3f} | L_embed: {loss_embed_item:.3f} psnr: {psnr:.3f}, Time:{elapsed_time}")
             start_time = time.time()
 
     # choose best action through argmax
@@ -1537,6 +1466,6 @@ for iter in range(400000):
     # torch.cuda.empty_cache()
 
     if (iter+1) % 10000 == 0:
-     save_checkpoint(qnet, model_dir + 'oven/3d_nerf/ckpt_5demo_4_keys' + str(iter+1) + '.pth')
+     save_checkpoint(qnet, model_dir + f'ckpt_{n_demo}demo_4_keys' + str(iter+1) + '.pth')
 
     #print(i, continuous_trans)

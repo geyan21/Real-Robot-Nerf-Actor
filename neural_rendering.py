@@ -527,7 +527,7 @@ class NeuralRenderer(nn.Module):
             if isinstance(lang_goal, list):
                 caption = ['a robot arm ' + cap.item() for cap in lang_goal]
             else:
-                caption = "a robot arm " + lang_goal.item()
+                caption = "a robot arm " + lang_goal
             # import pdb;
             # pdb.set_trace()
             # save image

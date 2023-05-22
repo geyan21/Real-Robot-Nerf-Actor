@@ -4,8 +4,10 @@ from typing import List, Union
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
+import torch.nn.functional as F
+from torch import einsum
+from inspect import isfunction
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 
@@ -168,6 +170,191 @@ class Conv3DBlock(nn.Module):
         x = self.norm(x) if self.norm is not None else x
         x = self.activation(x) if self.activation is not None else x
         return x
+
+
+class Conv1DBlock(nn.Module):
+    
+    def __init__(self, in_channels, out_channels,
+                 kernel_sizes: Union[int, list]=3, strides=1,
+                 norm=None, activation=None, padding_mode='replicate',
+                 padding=None):
+        super(Conv1DBlock, self).__init__()
+        padding = kernel_sizes // 2 if padding is None else padding
+        self.conv1d = nn.Conv1d(
+            in_channels, out_channels, kernel_sizes, strides, padding=padding,
+            padding_mode=padding_mode)
+
+        if activation is None:
+            nn.init.xavier_uniform_(self.conv1d.weight,
+                                    gain=nn.init.calculate_gain('linear'))
+            nn.init.zeros_(self.conv1d.bias)
+        elif activation == 'tanh':
+            nn.init.xavier_uniform_(self.conv1d.weight,
+                                    gain=nn.init.calculate_gain('tanh'))
+            nn.init.zeros_(self.conv1d.bias)
+        elif activation == 'lrelu':
+            nn.init.kaiming_uniform_(self.conv1d.weight, a=LRELU_SLOPE,
+                                     nonlinearity='leaky_relu')
+            nn.init.zeros_(self.conv1d.bias)
+        elif activation == 'relu':
+            nn.init.kaiming_uniform_(self.conv1d.weight, nonlinearity='relu')
+            nn.init.zeros_(self.conv1d.bias)
+        else:
+            raise ValueError()
+
+        self.activation = None
+        self.norm = None
+        if norm is not None:
+            raise NotImplementedError('Norm not implemented.')
+        if activation is not None:
+            self.activation = act_layer(activation)
+        self.out_channels = out_channels
+
+    def forward(self, x):
+        x = self.conv1d(x)
+        x = self.norm(x) if self.norm is not None else x
+        x = self.activation(x) if self.activation is not None else x
+        return x
+
+class InPlaceABN(nn.Module):
+    def __init__(self, out_channels, activation='leaky_relu'):
+        super(InPlaceABN, self).__init__()
+        self.bn = nn.BatchNorm3d(out_channels)
+        if activation == 'leaky_relu':
+            self.act = nn.LeakyReLU(inplace=True)
+        elif activation == 'relu':
+            self.act = nn.ReLU(inplace=True)
+        else:
+            raise ValueError()
+    
+    def forward(self, x):
+        return self.act(self.bn(x))
+    
+
+class ConvBnReLU3D(nn.Module):
+    def __init__(self, in_channels, out_channels,
+                 kernel_size=3, stride=1, pad=1,
+                 norm_act=InPlaceABN):
+        super(ConvBnReLU3D, self).__init__()
+        self.conv = nn.Conv3d(in_channels, out_channels,
+                              kernel_size, stride=stride, padding=pad, bias=False)
+        self.bn = norm_act(out_channels)
+
+
+    def forward(self, x):
+        return self.bn(self.conv(x))
+    
+class MultiLayer3DEncoder(nn.Module):
+    def __init__(self, in_channels=10, out_channels=64, norm_act=InPlaceABN):
+        super(MultiLayer3DEncoder, self).__init__()
+        self.out_channels = out_channels
+        # CHANNELS = [8, 16, 32, 64] # 0.58M
+        # CHANNELS = [64, 128, 256, 512] # 18.60M
+        CHANNELS = [32, 64, 128, 256] # 4.65M (32+64+128=224)
+        self.conv0 = ConvBnReLU3D(in_channels, CHANNELS[0], norm_act=norm_act)
+
+        self.conv1 = ConvBnReLU3D(CHANNELS[0], CHANNELS[1], stride=2, norm_act=norm_act)
+        self.conv2 = ConvBnReLU3D(CHANNELS[1], CHANNELS[1], norm_act=norm_act)
+
+        self.conv3 = ConvBnReLU3D(CHANNELS[1], CHANNELS[2], stride=2, norm_act=norm_act)
+        self.conv4 = ConvBnReLU3D(CHANNELS[2], CHANNELS[2], norm_act=norm_act)
+
+        self.conv5 = ConvBnReLU3D(CHANNELS[2], CHANNELS[3], stride=2, norm_act=norm_act)
+        self.conv6 = ConvBnReLU3D(CHANNELS[3], CHANNELS[3], norm_act=norm_act)
+
+        self.conv7 = nn.Sequential(
+            nn.ConvTranspose3d(CHANNELS[3], CHANNELS[2], 3, padding=1,
+                               stride=2, bias=False),
+            norm_act(CHANNELS[2]))
+
+        self.conv9 = nn.Sequential(
+            nn.ConvTranspose3d(CHANNELS[2], CHANNELS[1], 3, padding=1, output_padding=1,
+                               stride=2, bias=False),
+            norm_act(CHANNELS[1]))
+
+        self.conv11 = nn.Sequential(
+            nn.ConvTranspose3d(CHANNELS[1], CHANNELS[0], 3, padding=1, output_padding=1,
+                               stride=2, bias=False),
+            norm_act(CHANNELS[0]))
+
+        # self.conv12 = nn.Conv3d(8, 8, 3, stride=1, padding=1, bias=True)
+        self.conv_out = nn.Conv3d(CHANNELS[0], out_channels, 1, stride=1, padding=0, bias=True)
+
+    def forward(self, x):
+        voxel_list = [] # to store multi-scale features
+        voxel_list.append(x)
+        conv0 = self.conv0(x) 
+        conv2 = self.conv2(self.conv1(conv0)) # 16, 50^3
+        conv4 = self.conv4(self.conv3(conv2)) # 32, 25^3
+
+        x = self.conv6(self.conv5(conv4)) # 64, 13^3
+        x = conv4 + self.conv7(x) # 32, 25^3
+        voxel_list.append(x)
+        del conv4
+        x = conv2 + self.conv9(x)
+        voxel_list.append(x)
+        del conv2
+        x = conv0 + self.conv11(x)
+        del conv0
+        x = self.conv_out(x)
+        return x, voxel_list
+
+
+class MultiLayer3DEncoderShallow(nn.Module):
+    def __init__(self, in_channels=10, out_channels=64, norm_act=InPlaceABN):
+        super(MultiLayer3DEncoderShallow, self).__init__()
+        self.out_channels = out_channels
+        CHANNELS = [8, 16, 32, 64] # 0.58M
+        # CHANNELS = [64, 128, 256, 512] # 18.60M
+        # CHANNELS = [32, 64, 128, 256] # 4.65M (32+64+128=224)
+        self.conv0 = ConvBnReLU3D(in_channels, CHANNELS[0], norm_act=norm_act)
+
+        self.conv1 = ConvBnReLU3D(CHANNELS[0], CHANNELS[1], stride=2, norm_act=norm_act)
+        self.conv2 = ConvBnReLU3D(CHANNELS[1], CHANNELS[1], norm_act=norm_act)
+
+        self.conv3 = ConvBnReLU3D(CHANNELS[1], CHANNELS[2], stride=2, norm_act=norm_act)
+        self.conv4 = ConvBnReLU3D(CHANNELS[2], CHANNELS[2], norm_act=norm_act)
+
+        self.conv5 = ConvBnReLU3D(CHANNELS[2], CHANNELS[3], stride=2, norm_act=norm_act)
+        self.conv6 = ConvBnReLU3D(CHANNELS[3], CHANNELS[3], norm_act=norm_act)
+
+        self.conv7 = nn.Sequential(
+            nn.ConvTranspose3d(CHANNELS[3], CHANNELS[2], 3, padding=1,
+                               stride=2, bias=False),
+            norm_act(CHANNELS[2]))
+
+        self.conv9 = nn.Sequential(
+            nn.ConvTranspose3d(CHANNELS[2], CHANNELS[1], 3, padding=1, output_padding=1,
+                               stride=2, bias=False),
+            norm_act(CHANNELS[1]))
+
+        self.conv11 = nn.Sequential(
+            nn.ConvTranspose3d(CHANNELS[1], CHANNELS[0], 3, padding=1, output_padding=1,
+                               stride=2, bias=False),
+            norm_act(CHANNELS[0]))
+
+        # self.conv12 = nn.Conv3d(8, 8, 3, stride=1, padding=1, bias=True)
+        self.conv_out = nn.Conv3d(CHANNELS[0], out_channels, 1, stride=1, padding=0, bias=True)
+
+    def forward(self, x):
+        # voxel_list = [] # to store multi-scale features
+        # voxel_list.append(x)
+        conv0 = self.conv0(x) 
+        conv2 = self.conv2(self.conv1(conv0)) # 16, 50^3
+        conv4 = self.conv4(self.conv3(conv2)) # 32, 25^3
+
+        x = self.conv6(self.conv5(conv4)) # 64, 13^3
+        x = conv4 + self.conv7(x) # 32, 25^3
+        # voxel_list.append(x)
+        del conv4
+        x = conv2 + self.conv9(x)
+        # voxel_list.append(x)
+        del conv2
+        x = conv0 + self.conv11(x)
+        del conv0
+        x = self.conv_out(x)
+        return x
+
 
 
 class ConvTranspose3DBlock(nn.Module):
@@ -770,6 +957,23 @@ class ConvTransposeUp3DBlock(nn.Module):
         return x
 
 
+class SpatialSoftmax1D(torch.nn.Module):
+
+    def __init__(self):
+        super(SpatialSoftmax1D, self).__init__()
+        self.temperature = 0.01
+        
+
+    def forward(self, feature):
+        b, d, N = feature.shape
+        # softmax along feature dimension
+        softmax_attention = F.softmax(feature / self.temperature, dim=1)
+        # sum along spatial dimension
+        feature_keypoints = torch.sum(softmax_attention, dim=-1,
+                               keepdim=True)
+        return feature_keypoints.view(b, -1)
+        
+
 class SpatialSoftmax3D(torch.nn.Module):
 
     def __init__(self, depth, height, width, channel):
@@ -807,3 +1011,121 @@ class SpatialSoftmax3D(torch.nn.Module):
         expected_xy = torch.cat([expected_x, expected_y, expected_z], 1)
         feature_keypoints = expected_xy.view(-1, self.channel * 3)
         return feature_keypoints
+
+
+  
+class LanguageInformedVisualAttention(nn.Module):
+    """
+    gated cross attention between vision and language
+    """
+    def __init__(self, language_dim=1024, visual_dim=512):
+        super().__init__()
+        self.lang_dim = language_dim
+        self.visual_dim = visual_dim
+        self.projection = nn.Linear(self.lang_dim, self.visual_dim)
+
+        self.ff = nn.Sequential(
+            nn.Linear(self.visual_dim, self.visual_dim),
+            nn.ReLU(),
+            nn.Linear(self.visual_dim, self.visual_dim)
+        )
+        self.ff_gate = nn.Parameter(torch.tensor([0.]))
+
+        self.attention = nn.MultiheadAttention(self.visual_dim, 1)
+        self.attn_gate = nn.Parameter(torch.tensor([0.]))
+
+
+    def forward(self, visual_embed, language_embed):
+        language_embed = self.projection(language_embed).transpose(0,1)
+        visual_embed = visual_embed.transpose(0,1)
+
+       
+        # 1. Gated Cross Attention
+        
+        visual_embed = visual_embed + self.attn_gate.tanh() * self.attention(query=visual_embed, key=language_embed, value=language_embed)[0]
+    
+        # 2. Gated Feed Forward
+        visual_embed = visual_embed + self.ff_gate.tanh() * self.ff(visual_embed)
+
+        # print("self.attn_gate: ", self.attn_gate)
+        # print("self.ff_gate: ", self.ff_gate)
+
+        return visual_embed.transpose(0,1)
+
+
+
+
+def exists(val):
+    return val is not None
+def default(val, d):
+    if exists(val):
+        return val
+    return d() if isfunction(d) else d
+
+class VLCrossAttention(nn.Module):
+    def __init__(self, vis_query_dim, lang_context_dim=None, heads=8, dim_head=64, dropout=0.):
+        super().__init__()
+        inner_dim = dim_head * heads
+        lang_context_dim = default(lang_context_dim, vis_query_dim)
+
+        self.scale = dim_head ** -0.5
+        self.heads = heads
+
+        self.to_q = nn.Linear(vis_query_dim, inner_dim, bias=False)
+        self.to_k = nn.Linear(lang_context_dim, inner_dim, bias=False)
+        self.to_v = nn.Linear(lang_context_dim, inner_dim, bias=False)
+
+        self.to_out = nn.Sequential(
+            nn.Linear(inner_dim, vis_query_dim),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x, context=None, mask=None):
+        h = self.heads
+
+        q = self.to_q(x)
+        context = default(context, x)
+        k = self.to_k(context)
+        v = self.to_v(context)
+
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
+
+        sim = einsum('b i d, b j d -> b i j', q, k) * self.scale
+        del q, k
+
+        if exists(mask):
+            mask = rearrange(mask, 'b ... -> b (...)')
+            max_neg_value = -torch.finfo(sim.dtype).max
+            mask = repeat(mask, 'b j -> (b h) () j', h=h)
+            sim.masked_fill_(~mask, max_neg_value)
+
+        # attention, what we cannot get enough of
+        sim = sim.softmax(dim=-1)
+
+        out = einsum('b i j, b j d -> b i d', sim, v)
+        out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
+        return self.to_out(out)
+
+
+def print_params(model):
+    from termcolor import cprint
+    # 定义一个字典来存储每个部分的参数数量
+    params_dict = {}
+
+    all_num_param = sum(p.numel() for p in model.parameters())
+
+    # 遍历所有参数
+    for name, param in model.named_parameters():
+        # 获取当前参数的部分名称，即第一个'.'之前的字符串
+        part_name = name.split('.')[0]
+        # 如果该部分名称不在字典中，则将其添加到字典中
+        if part_name not in params_dict:
+            params_dict[part_name] = 0
+        # 将当前参数的数量加入到该部分的参数数量中
+        params_dict[part_name] += param.numel()
+
+    # 遍历所有部分，计算并打印总参数数量
+    cprint(f'Total number of parameters: {all_num_param / 1e6:.4f}M', 'cyan')
+    for part_name, num_params in params_dict.items():
+        # print num (in M) and percentage
+        cprint(f'   {part_name}: {num_params / 1e6:.4f}M ({num_params / all_num_param:.2%})', 'cyan')
